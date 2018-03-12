@@ -1,254 +1,492 @@
-#!/usr/bin/env bash
+#!/bin/sh
 #
-# ### AUTHORS ###
+# Wrapper for git-filter-branch so that we can use it in an incremental
+# way.
 #
-# - Michele Locati <michele@locati.it>
+# Copyright (c) Michele Locati, 2018
 #
+# MIT license
+# https://github.com/mlocati/incremental-git-filter-branch/blob/master/LICENSE
 #
-# ### LICENSE ###
-#
-# MIT - https://github.com/mlocati/incremental-git-filter-branch/blob/master/LICENSE
-#
-#
-# ### CONFIGURATION ###
-#
-# The source repository
-SOURCE_REPOSITORY_URL=https://github.com/mlocati/incremental-git-filter-branch.git
-# The destination repository
-DESTINATION_REPOSITORY_URL=git@github.com:your/repository.git
-# The filter to be applied
-FILTER='--subdirectory-filter bin'
-# The path to a local directory where we'll process the repositories
-WORK_DIRECTORY="$(pwd)/temp"
-# A space-separated list of branches to limit filtering to
-BRANCH_WHITELIST=''
-# A space-separated list of branches not to be parsed
-BRANCH_BLACKLIST=''
-#
-
 
 # Exit immediately if a pipeline, a list, or a compound command, exits with a non-zero status.
 set -o errexit
-# Any trap on ERR is inherited by shell functions, command substitutions, and commands executed in a subshell environment.
-set -o errtrace
-# The return value of a pipeline is the value of the last (rightmost) command to exit with a non-zero status, or zero if all commands in the pipeline exit successfully
-set -o pipefail
 # Treat unset variables and parameters other than the special parameters "@" and "*" as an error when performing parameter expansion.
 set -o nounset
+# Set the Internal Field Separator
+IFS=' 	
+'
 
-function setupEnvironment {
-	echo '# Setting up environment'
-	if [[ -z "${SOURCE_REPOSITORY_URL-}" ]]; then
-		echo 'Missing variable: SOURCE_REPOSITORY_URL' >&2
+die () {
+	printf '%s\n' "${1}">&2
+	exit 1
+}
+
+usage () {
+	if test $# -eq 1
+	then
+		printf '%s\n\n%s\n' "${1}" "Type ${0} --help to get help">&2
 		exit 1
 	fi
-	if [[ -z "${DESTINATION_REPOSITORY_URL-}" ]]; then
-		echo 'Missing variable: DESTINATION_REPOSITORY_URL' >&2
-		exit 1
+	printf '%s' "Usage:
+${0} [-h | --help] [--workdir <workdirpath>]
+	[--whitelist <whitelist>] [--blacklist <blacklist>]
+	[--no-hardlinks] [--no-atomic] [--no-lock] [--]
+	<sourcerepository> <filter> <destinationrepository>
+	Apply git filter-branch in an incremental way
+
+Where:
+
+--workdir workdirpath
+	set the path to the directory where the temporary local repositories are created.
+	By default, we'll use a directory named temp in the current directory.
+--whitelist <whitelist>
+	a whitespace-separated list of branches be included in the process.
+	Multiple options can be specified.
+	By default, all branches will be processed.
+--blacklist <blacklist>
+	a whitespace-separated list of branches to be excluded from the process.
+	Multiple options can be specified.
+	By default, all branches will be processed.
+	Blacklisted branches take the precedence over whitelisted ones.
+--no-hardlinks
+	Do not create hard links (useful for file systems that don't support it).
+--no-atomic
+	Do not use an atomic transaction when pushing to the destination repository.
+--no-lock
+	Do not acquire an exclusive lock (useful for systems that don't have flock(1)).
+sourcerepository
+	The URL or path to the source repository.
+filter
+	The list of parameters to be passed to the git filter-branch command.
+destinationrepository
+	The URL or path to the destination repository.
+
+You can prefix branch names in both whitelist and blacklist with 'rx:': in this case a regular expression check will be performed.
+For instance: --whitelist 'master rx:release\\/\\d+(\\.\\d+)*' will match 'master' and 'release/1.1'
+"
+	exit 0
+}
+
+
+readParameters () {
+	WORK_DIRECTORY="$(pwd)/temp"
+	BRANCH_WHITELIST=''
+	BRANCH_BLACKLIST=''
+	NO_HARDLINKS=''
+	ATOMIC='--atomic'
+	NO_LOCK=''
+	while :
+	do
+		if test $# -lt 1
+		then
+			usage 'Not enough arguments'
+		fi
+		readParameters_currentArgument="${1}"
+		case "${readParameters_currentArgument}" in
+			--)
+				shift 1
+				break
+				;;
+			-h|--help)
+				usage
+				;;
+			--workdir)
+				if test $# -lt 2
+				then
+					usage 'Not enough arguments'
+				fi
+				WORK_DIRECTORY="${2}"
+				if test -z "${WORK_DIRECTORY}"
+				then
+					die 'The working directory option is empty'
+				fi
+				shift 2
+				;;
+			--whitelist)
+				if test $# -lt 2
+				then
+					usage 'Not enough arguments'
+				fi
+				BRANCH_WHITELIST="${BRANCH_WHITELIST} ${2}"
+				shift 2
+				;;
+			--blacklist)
+				if test $# -lt 2
+				then
+					usage 'Not enough arguments'
+				fi
+				BRANCH_BLACKLIST="${BRANCH_BLACKLIST} ${2}"
+				shift 2
+				;;
+			--no-hardlinks)
+				NO_HARDLINKS='--no-hardlinks'
+				shift 1
+				;;
+			--no-atomic)
+				ATOMIC='--no-atomic'
+				shift 1
+				;;
+			--no-lock)
+				NO_LOCK='yes'
+				shift 1
+				;;
+			-*)
+				usage "Unknown option: ${readParameters_currentArgument}"
+				;;
+			*)
+				break
+				;;
+		esac
+	done
+	if test $# -lt 3
+	then
+		usage 'Not enough arguments'
 	fi
-	if [[ -z "${FILTER-}" ]]; then
-		echo 'Missing variable: FILTER' >&2
-		exit 1
+	if test $# -gt 3
+	then
+		usage 'Too many arguments'
 	fi
-	if [[ -z "${WORK_DIRECTORY-}" ]]; then
-		echo 'Missing variable: WORK_DIRECTORY' >&2
-		exit 1
+	SOURCE_REPOSITORY_URL="${1}"
+	if test -z "${SOURCE_REPOSITORY_URL}"
+	then
+		die 'The source repository location is empty.'
 	fi
-	if [[ -z "${BRANCH_WHITELIST-}" ]]; then
-		BRANCH_WHITELIST=''
-	else
-		BRANCH_WHITELIST=$(printf "${BRANCH_WHITELIST}" | sed -r 's:[ \t\r\n]+: :g')
-		BRANCH_WHITELIST=$(trim "${BRANCH_WHITELIST}")
-		if [[ -n "${BRANCH_WHITELIST-}" ]]; then
-			BRANCH_WHITELIST=" ${BRANCH_WHITELIST} "
+	FILTER="${2}"
+	if test -z "${FILTER}"
+	then
+		die 'The filter is empty.'
+	fi
+	DESTINATION_REPOSITORY_URL="${3}"
+	if test -z "${DESTINATION_REPOSITORY_URL}"
+	then
+		die 'The destination repository location is empty.'
+	fi
+}
+
+absolutizeUrl () {
+	absolutizeUrl_url="${1}"
+	case "${absolutizeUrl_url}" in
+		[/\\]* | ?*:*)
+			;;
+		*)
+			absolutizeUrl_url=$(cd "${absolutizeUrl_url}" && pwd)
+			;;
+	esac
+	printf '%s' "${absolutizeUrl_url}"
+}
+
+checkFilter () {
+	checkFilter_some=0
+	while :
+	do
+		if test $# -lt 1
+		then
+			break
+		fi
+		checkFilter_some=1
+		checkFilter_optName="${1}"
+		shift 1
+		case "${checkFilter_optName}" in
+			--setup)
+				if test $# -lt 1
+				then
+					die "Invalid syntax in filter (${checkFilter_optName} without command)"
+				fi
+				shift 1
+				;;
+			--tag-name-filter)
+				die "You can't use --tag-name-filter (it's handled automatically)"
+				;;
+			--*-filter)
+				if test $# -lt 1
+				then
+					die "Invalid syntax in filter (${checkFilter_optName} without command)"
+				fi
+				shift 1
+				;;
+			--prune-empty)
+				;;
+			*)
+				die "Invalid syntax in filter (unknown option: ${checkFilter_optName})"
+				;;
+		esac
+	done
+	if test ${checkFilter_some} -lt 1
+	then
+		die 'The filter is empty.'
+	fi
+}
+
+normalizeParameters () {
+	echo '# Normalizing source repository URL'
+	SOURCE_REPOSITORY_URL=$(absolutizeUrl "${SOURCE_REPOSITORY_URL}")
+	echo '# Normalizing destination repository URL'
+	DESTINATION_REPOSITORY_URL=$(absolutizeUrl "${DESTINATION_REPOSITORY_URL}")
+	echo '# Checking filter'
+	# shellcheck disable=SC2086
+	checkFilter ${FILTER}
+}
+
+checkEnvironment () {
+	if test -z "${NO_LOCK}"
+	then
+		if ! command -v flock >/dev/null
+		then
+			die 'The flock command is not available. You may want to use --no-lock option to avoid using it (but no concurrency check will be performed).'
 		fi
 	fi
-	if [[ -z "${BRANCH_BLACKLIST-}" ]]; then
-		BRANCH_BLACKLIST=''
-	else
-		BRANCH_BLACKLIST=$(printf "${BRANCH_BLACKLIST}" | sed -r 's:[ \t\r\n]+: :g')
-		BRANCH_BLACKLIST=$(trim "${BRANCH_BLACKLIST}")
-		if [[ -n "${BRANCH_BLACKLIST-}" ]]; then
-			BRANCH_BLACKLIST=" ${BRANCH_BLACKLIST} "
-		fi
+	if ! command -v git >/dev/null
+	then
+		die 'The required git command is not available.'
 	fi
-	if [[ -n ${BRANCH_WHITELIST} ]] && [[ -n ${BRANCH_BLACKLIST} ]]; then
-		echo 'You can not specify BRANCH_WHITELIST and BRANCH_BLACKLIST variables' >&2
-		exit 1
+	if ! command -v sed >/dev/null
+	then
+		die 'The required sed command is not available.'
+	fi
+	if ! command -v grep >/dev/null
+	then
+		die 'The required grep command is not available.'
+	fi
+	if ! command -v cut >/dev/null
+	then
+		die 'The required grep command is not available.'
+	fi
+	if ! command -v md5sum >/dev/null
+	then
+		die 'The required md5sum command is not available.'
+	fi
+}
+
+
+initializeEnvironment () {
+	if ! test -d "${WORK_DIRECTORY}"
+	then
+		mkdir --parents -- "${WORK_DIRECTORY}" || die "Failed to create working directory ${WORK_DIRECTORY}"
 	fi
 	SOURCE_REPOSITORY_DIR=${WORK_DIRECTORY}/source-$(md5 "${SOURCE_REPOSITORY_URL}")
 	WORKER_REPOSITORY_DIR=${WORK_DIRECTORY}/worker-$(md5 "${SOURCE_REPOSITORY_URL}${DESTINATION_REPOSITORY_URL}")
-	mkdir --parents --mode=0770 -- "${WORK_DIRECTORY}"
 }
 
-function acquireLock {
-	echo '# Checking concurrency'
-	local LOCK_FILE=${WORKER_REPOSITORY_DIR}.lock
-	local WAITLOCK=1
-	local TIMEOUT=3
-	exec 9>"${LOCK_FILE}"
-	while :; do
-		flock --exclusive --timeout ${TIMEOUT} 9 && WAITLOCK=0 || true
-		if [[ ${WAITLOCK} -eq 0 ]]; then
-			break;
-		fi
-		echo '... still waiting...'
-	done
-}
-
-function prepareLocalSourceRepository {
-	local CREATE_MIRROR=1
-	if [[ -f "${SOURCE_REPOSITORY_DIR}/config" ]]; then
-		echo '# Updating source repository'
-		git -C "${SOURCE_REPOSITORY_DIR}" remote update --prune && CREATE_MIRROR=0 || true
+acquireLock () {
+	if test -z "${NO_LOCK}"
+	then
+		exec 9>"${WORKER_REPOSITORY_DIR}.lock"
+		while :
+		do
+			if flock --exclusive --timeout 3 9
+			then
+				break
+			fi
+			echo 'Lock detected... Waiting that it becomes available...'
+		done
 	fi
-	if [[ ${CREATE_MIRROR} -eq 1 ]]; then
+}
+
+prepareLocalSourceRepository () {
+	prepareLocalSourceRepository_haveToCreateMirror=1
+	if test -f "${SOURCE_REPOSITORY_DIR}/config"
+	then
+		echo '# Updating source repository'
+		if git -C "${SOURCE_REPOSITORY_DIR}" remote update --prune
+		then
+			prepareLocalSourceRepository_haveToCreateMirror=0
+		fi
+	fi
+	if test ${prepareLocalSourceRepository_haveToCreateMirror} -eq 1
+	then
 		echo '# Cloning source repository'
 		rm -rf "${SOURCE_REPOSITORY_DIR}"
 		git clone --mirror "${SOURCE_REPOSITORY_URL}" "${SOURCE_REPOSITORY_DIR}"
 	fi
 }
 
-function getSourceRepositoryBranches {
+getSourceRepositoryBranches () {
 	echo '# Listing source branches'
 	# List all branches and takes only the part after "refs/heads/", and store them in the SOURCE_BRANCHES variable
-	SOURCE_BRANCHES=$(git -C "${SOURCE_REPOSITORY_DIR}" show-ref --heads | sed -r 's:^.*?refs/heads/::')
-	if [[ -z "${SOURCE_BRANCHES}" ]]; then
-		echo 'Failed to retrieve branch list' >&2
-		exit 1
+	SOURCE_BRANCHES=$(git -C "${SOURCE_REPOSITORY_DIR}" show-ref --heads | sed -E 's:^.*?refs/heads/::')
+	if test -z "${SOURCE_BRANCHES}"
+	then
+		die 'Failed to retrieve branch list'
 	fi
-	if [[ -n ${BRANCH_WHITELIST} ]]; then
-		local SOURCE_BRANCH
-		local MISSING_BRANCHES="${BRANCH_WHITELIST}"
-		for SOURCE_BRANCH in ${SOURCE_BRANCHES} ; do
-			MISSING_BRANCHES=$(printf "${MISSING_BRANCHES}" | sed -r "s: ${SOURCE_BRANCH} : :g")
-		done
-		MISSING_BRANCHES=$(trim "${MISSING_BRANCHES}")
-		if [[ -n ${MISSING_BRANCHES} ]]; then
-			printf "These branches specified in BRANCH_WHITELIST were not found in the source repository:\n${MISSING_BRANCHES}\n" >&2
+}
+
+getTagList () {
+	# List all tags and takes only the part after "refs/heads/"
+	printf '%s\n' $(git -C "${1}" show-ref --tags | sed -E 's:^.*?refs/tags/::' || true)
+}
+
+branchInList () {
+	branchInList_branch="${1}"
+	branchInList_list="${2}"
+	for branchInList_listItem in ${branchInList_list}
+	do
+		if test -n "${branchInList_listItem}"
+		then
+			case "${branchInList_listItem}" in
+				rx:*)
+					branchInList_substring=$(printf '%s' "${branchInList_listItem}" | cut -c4-)
+					if printf '%s' "${branchInList_branch}" | grep -Eq "^${branchInList_substring}$"
+					then
+						return 0
+					fi
+					;;
+				*)
+					if test "${branchInList_branch}" = "${branchInList_listItem}"
+					then
+						return 0
+					fi
+					;;
+			esac
+		fi
+	done
+	return 1
+}
+
+getBranchesToProcess () {
+	echo '# Determining branches to be processed'
+	WORK_BRANCHES=''
+	for getBranchesToProcess_sourceBranch in ${SOURCE_BRANCHES}
+	do
+		if ! branchInList "${getBranchesToProcess_sourceBranch}" "${BRANCH_BLACKLIST}"
+		then
+			getBranchesToProcess_branchPassed=''
+			if test -z "${BRANCH_WHITELIST}"
+			then
+				getBranchesToProcess_branchPassed='yes'
+			elif branchInList "${getBranchesToProcess_sourceBranch}" "${BRANCH_WHITELIST}"
+			then
+				getBranchesToProcess_branchPassed='yes'
+			fi
+			if test -n "${getBranchesToProcess_branchPassed}"
+			then
+				WORK_BRANCHES="${WORK_BRANCHES} ${getBranchesToProcess_sourceBranch}"
+			fi
+		fi
+	done
+	if test -z "${WORK_BRANCHES}"
+	then
+		die 'None of the source branches passes the whitelist/blacklist filter'
+	fi
+}
+
+prepareWorkerRepository () {
+	prepareWorkerRepository_haveToCreateRepo=1
+	if test -f "${WORKER_REPOSITORY_DIR}/.git/config"
+	then
+		echo '# Checking working repository'
+		if git -C "${WORKER_REPOSITORY_DIR}" rev-parse --git-dir >/dev/null 2>/dev/null
+		then
+			prepareWorkerRepository_haveToCreateRepo=0
 		fi
 	fi
-}
-
-function getSourceRepositoryTags {
-	echo '# Listing source tags'
-	# List all tags and takes only the part after "refs/tags/", and store them in the SOURCE_TAGS variable
-	SOURCE_TAGS=$(git -C "${SOURCE_REPOSITORY_DIR}" show-ref --tags | sed -r 's:^.*?refs/tags/::')
-}
-
-function prepareWorkerRepository {
-	local NEW_CLONE=1
-	if [[ -f "${WORKER_REPOSITORY_DIR}/.git/config" ]]; then
-		echo '# Checking working repository'
-		git -C "${WORKER_REPOSITORY_DIR}" fsck --no-dangling --connectivity-only && NEW_CLONE=0 || true
-	fi
-	if [[ ${NEW_CLONE} -eq 1 ]]; then
+	if test ${prepareWorkerRepository_haveToCreateRepo} -eq 1
+	then
 		echo '# Creating working repository'
 		rm -rf "${WORKER_REPOSITORY_DIR}"
-		echo '# Adding destination to working repository'
-		(
-			git clone --no-hardlinks --local --origin source "${SOURCE_REPOSITORY_DIR}" "${WORKER_REPOSITORY_DIR}" && \
-			git -C "${WORKER_REPOSITORY_DIR}" remote add destination "${DESTINATION_REPOSITORY_URL}" && \
-			git -C "${WORKER_REPOSITORY_DIR}" fetch --prune destination \
-		) || (rm -rf "${WORKER_REPOSITORY_DIR}" && false)
-	fi
-}
-
-function shouldSkipBranch {
-	local BRANCH="${1}"
-	local RESULT=''
-	if [[ -n "${BRANCH_WHITELIST}" ]]; then
-		if [[ " ${BRANCH_WHITELIST} " != *" ${BRANCH} "* ]]; then
-			RESULT='not in whitelist'
+		echo '# Adding mirror source repository to working repository'
+		git clone ${NO_HARDLINKS} --local --origin source "${SOURCE_REPOSITORY_DIR}" "${WORKER_REPOSITORY_DIR}"
+		echo '# Adding destination repository to working repository'
+		if ! git -C "${WORKER_REPOSITORY_DIR}" remote add destination "${DESTINATION_REPOSITORY_URL}"
+		then
+			rm -rf "${WORKER_REPOSITORY_DIR}"
+			exit 1
 		fi
-	elif [[ " ${BRANCH_BLACKLIST} " = *" ${BRANCH} "* ]]; then
-		RESULT='in blacklist'
+		echo '# Fetching data from cloned destination repository'
+		if ! git -C "${WORKER_REPOSITORY_DIR}" fetch --prune destination
+		then
+			rm -rf "${WORKER_REPOSITORY_DIR}"
+			exit 1
+		fi
 	fi
-	printf "${RESULT}"
 }
 
-function processBranch {
-	local BRANCH="${1}"
-	local NOT_UPDATED=1
-	echo '  - fetch'
-	git -C "${WORKER_REPOSITORY_DIR}" fetch --quiet --tags source "${BRANCH}"
-	echo '  - checkout'
-	git -C "${WORKER_REPOSITORY_DIR}" checkout --quiet --force -B "filter-branch/source/${BRANCH}" "remotes/source/${BRANCH}"
+processBranch () {
+	processBranch_branch="${1}"
+	processBranch_notUpdated=1
+	echo '  - fetching'
+	git -C "${WORKER_REPOSITORY_DIR}" fetch --quiet --tags source "${processBranch_branch}"
+	echo '  - checking-out'
+	git -C "${WORKER_REPOSITORY_DIR}" checkout --quiet --force -B "filter-branch/source/${processBranch_branch}" "remotes/source/${processBranch_branch}"
 	echo '  - determining delta'
-	local RANGE="filter-branch/result/${BRANCH}"
-	local LAST=$(git -C "${WORKER_REPOSITORY_DIR}" show-ref -s "refs/heads/filter-branch/filtered/${BRANCH}" || true)
-	if [[ -n "${LAST}" ]]; then
-		RANGE="${LAST}..${RANGE}"
+	processBranch_range="filter-branch/result/${processBranch_branch}"
+	processBranch_last=$(git -C "${WORKER_REPOSITORY_DIR}" show-ref -s "refs/heads/filter-branch/filtered/${processBranch_branch}" || true)
+	if test -n "${processBranch_last}"
+	then
+		processBranch_range="${processBranch_last}..${processBranch_range}"
 	fi
-	local FETCH_HEAD=$(git -C "${WORKER_REPOSITORY_DIR}" rev-parse FETCH_HEAD)
-	if [[ "${LAST}" = "${FETCH_HEAD}" ]]; then
+	processBranch_fetchHead=$(git -C "${WORKER_REPOSITORY_DIR}" rev-parse FETCH_HEAD)
+	if test "${processBranch_last}" = "${processBranch_fetchHead}"
+	then
 		echo '  - nothing new, skipping'
 	else
 		echo '  - initializing filter'
-		rm -f "${WORKER_REPOSITORY_DIR}/.git/refs/filter-branch/originals/${BRANCH}/refs/heads/filter-branch/result/${BRANCH}"
-		git -C "${WORKER_REPOSITORY_DIR}" branch --force "filter-branch/result/${BRANCH}" FETCH_HEAD
+		rm -f "${WORKER_REPOSITORY_DIR}/.git/refs/filter-branch/originals/${processBranch_branch}/refs/heads/filter-branch/result/${processBranch_branch}"
+		git -C "${WORKER_REPOSITORY_DIR}" branch --force "filter-branch/result/${processBranch_branch}" FETCH_HEAD
 		rm -rf "${WORKER_REPOSITORY_DIR}.filter-branch"
 		echo "  - filtering commits"
-		local FOUND_SOMETHING
-		git -C "${WORKER_REPOSITORY_DIR}" filter-branch \
+		# shellcheck disable=SC2086
+		if git -C "${WORKER_REPOSITORY_DIR}" filter-branch \
 			${FILTER} \
-			--tag-name-filter cat \
-			--prune-empty \
+			--tag-name-filter 'IFS=$(printf "\r\n") read -r tag; printf "filter-branch/converted-tags/%s" "${tag}"' \
 			-d "${WORKER_REPOSITORY_DIR}.filter-branch" \
-			--original "refs/filter-branch/originals/${BRANCH}" \
-			--state-branch "refs/filter-branch/states/${BRANCH}" \
-			-- ${RANGE} \
-			&& FOUND_SOMETHING=1 || FOUND_SOMETHING=0 # May fail with "Found nothing to rewrite"
-		echo "  - storing state"
-		git -C "${WORKER_REPOSITORY_DIR}" branch -f "filter-branch/filtered/${BRANCH}" FETCH_HEAD
-		if [[ ${FOUND_SOMETHING} -eq 1 ]]; then
-			NOT_UPDATED=0
-		fi
-	fi
-	return $NOT_UPDATED
-}
-
-function processBranches {
-	local BRANCH
-	local SKIP_REASON
-	local PUSH_REFSPEC=''
-	for BRANCH in ${SOURCE_BRANCHES} ; do
-		echo "# Processing branch ${BRANCH}"
-		SKIP_REASON=$(shouldSkipBranch "${BRANCH}")
-		if [[ -n "${SKIP_REASON}" ]]; then
-			echo "  - not to be processed (${SKIP_REASON})"
+			--original "refs/filter-branch/originals/${processBranch_branch}" \
+			--state-branch "refs/filter-branch/states/${processBranch_branch}" \
+			--force \
+			-- "${processBranch_range}"
+		then
+			processBranch_foundSomething=1
 		else
-			local BRANCH_UPDATED
-			processBranch "${BRANCH}" && PUSH_REFSPEC="${PUSH_REFSPEC} filter-branch/result/${BRANCH}:${BRANCH}" || true
+			# May fail with "Found nothing to rewrite"
+			processBranch_foundSomething=0
+		fi
+		echo "  - storing state"
+		git -C "${WORKER_REPOSITORY_DIR}" branch -f "filter-branch/filtered/${processBranch_branch}" FETCH_HEAD
+		if test ${processBranch_foundSomething} -eq 1
+		then
+			processBranch_notUpdated=0
+		fi
+	fi
+	return ${processBranch_notUpdated}
+}
+
+processBranches () {
+	processBranches_pushRefSpec=''
+	for processBranches_branch in ${WORK_BRANCHES}
+	do
+		echo "# Processing branch ${processBranches_branch}"
+		processBranch "${processBranches_branch}" || true
+		processBranches_pushRefSpec="${processBranches_pushRefSpec} filter-branch/result/${processBranches_branch}:${processBranches_branch}"
+	done
+	echo '# Listing source tags'
+	processBranches_sourceTags=$(getTagList "${SOURCE_REPOSITORY_DIR}")
+	echo '# Determining destination tags'
+	for processBranches_sourceTag in ${processBranches_sourceTags}
+	do
+		processBranches_rewrittenTag="filter-branch/converted-tags/${processBranches_sourceTag}"
+		if git -C "${WORKER_REPOSITORY_DIR}" rev-list --max-count=0 "${processBranches_rewrittenTag}" 2>/dev/null
+		then
+			processBranches_pushRefSpec="${processBranches_pushRefSpec} ${processBranches_rewrittenTag}:${processBranches_sourceTag}"
 		fi
 	done
-	if [[ -z "${PUSH_REFSPEC}" ]]; then
-		echo "# No branch updated"
-	else
-		echo "# Pushing to destination repository"
-		git -C "${WORKER_REPOSITORY_DIR}" push --quiet --force --tags destination ${PUSH_REFSPEC}
-	fi
+	echo "# Pushing to destination repository"
+	# shellcheck disable=SC2086
+	git -C "${WORKER_REPOSITORY_DIR}" push --quiet --force ${ATOMIC} destination ${processBranches_pushRefSpec}
 }
 
-function trim {
-	local STR="${1}"
-	while [[ ${STR} == ' '* ]]; do
-		STR="${STR## }"
-	done
-	while [[ ${STR} == *' ' ]]; do
-		STR="${STR%% }"
-	done
-	printf "${STR}"
+md5 () {
+	printf '%s' "${1}" | md5sum | sed -E 's: .*$::'
 }
 
-function md5 {
-	printf '%s' "%1" | md5sum | sed -e 's: .*$::'
-}
-
-setupEnvironment
+readParameters "$@"
+normalizeParameters
+checkEnvironment
+initializeEnvironment
 acquireLock
 prepareLocalSourceRepository
 getSourceRepositoryBranches
-getSourceRepositoryTags
+getBranchesToProcess
 prepareWorkerRepository
 processBranches
+echo "All done."
+

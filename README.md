@@ -11,12 +11,24 @@ the first time `filter-branch` still requires some time, but following calls can
 
 ## Requirements
 
-- recent bash shell
-- git 2.5.0 or newer.
+- git 2.5.0 or newer
+- common commands (`sed`, `grep`, `cut`, `md5sum`)
+
 
 ## Usage
 
-Get the script, and customize the variables you can find at its beginning.
+Get the script and read the syntax using the `--help` option.
+
+
+## Examples
+
+```sh
+./incremental-git-filterbranch.sh \
+    --whitelist 'develop master rx:release\/.*' \
+    https://github.com/concrete5/concrete5.git \
+    '--prune-empty --subdirectory-filter concrete' \
+    git@github.com:concrete5/concrete5-core.git
+```
 
 
 ## Legal stuff
