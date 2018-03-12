@@ -431,7 +431,7 @@ processBranch () {
 			--tag-name-filter 'IFS=$(printf "\r\n") read -r tag; printf "filter-branch/converted-tags/%s" "${tag}"' \
 			-d "${WORKER_REPOSITORY_DIR}.filter-branch" \
 			--original "refs/filter-branch/originals/${processBranch_branch}" \
-			--state-branch "refs/filter-branch/states/${processBranch_branch}" \
+			--state-branch "refs/filter-branch/state" \
 			--force \
 			-- "${processBranch_range}"
 		then
