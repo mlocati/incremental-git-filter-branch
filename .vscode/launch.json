@@ -1,0 +1,17 @@
+{
+	"version": "0.2.0",
+	"configurations": [
+		{
+			"type": "bashdb",
+			"request": "launch",
+			"name": "Bash-Debug (simplest configuration)",
+			"program": "${file}",
+			"osx": {
+				"pathPkill": "/usr/bin/pkill"
+			},
+			"windows": {
+				"pathBash": "C:/Windows/System32/bash.exe"
+			}
+		}
+	]
+}
