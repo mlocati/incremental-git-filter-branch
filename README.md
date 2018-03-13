@@ -1,3 +1,5 @@
+[![TravisCI Build Status](https://travis-ci.org/mlocati/incremental-git-filter-branch.svg?branch=master)](https://travis-ci.org/mlocati/incremental-git-filter-branch)
+
 ## Introduction
 
 [`git filter-branch`](https://git-scm.com/docs/git-filter-branch) is a really nice git feature.
