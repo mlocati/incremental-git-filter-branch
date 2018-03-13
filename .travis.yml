@@ -3,9 +3,9 @@ language: generic
 sudo: true
 
 before_script:
-  - sudo add-apt-repository ppa:git-core/ppa
-  - sudo apt update
-  - sudo apt install -y git || sudo apt upgrade -y git
+  - sudo add-apt-repository --yes ppa:git-core/ppa
+  - sudo apt-get update --yes
+  - sudo apt-get install --yes git || sudo apt-get upgrade --yes git
 
 script:
   - ./test/all-tests.sh
