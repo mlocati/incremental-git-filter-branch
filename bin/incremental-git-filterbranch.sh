@@ -250,11 +250,22 @@ checkEnvironment () {
 	fi
 	if ! command -v cut >/dev/null
 	then
-		die 'The required grep command is not available.'
+		die 'The required cut command is not available.'
+	fi
+	if ! command -v sort >/dev/null
+	then
+		die 'The required sort command is not available.'
 	fi
 	if ! command -v md5sum >/dev/null
 	then
 		die 'The required md5sum command is not available.'
+	fi
+	checkEnvironment_vMin='2.15.0'
+	checkEnvironment_vCur=$(git --version | cut -d ' ' -f3)
+	checkEnvironment_vWork=$(printf "${checkEnvironment_vCur}\n${checkEnvironment_vMin}" | sort -t '.' -n -k1,1 -k2,2 -k3,3 -k4,4 | head -n 1)
+	if test "${checkEnvironment_vWork}" != "${checkEnvironment_vMin}"
+	then
+		die "This script requires git ${checkEnvironment_vMin} (you have git ${checkEnvironment_vWork})."
 	fi
 }
 
