@@ -12,7 +12,7 @@ the first time `filter-branch` still requires some time, but following calls can
 ## Requirements
 
 - git 2.5.0 or newer
-- common commands (`sed`, `grep`, `cut`, `md5sum`)
+- common commands (`sed`, `grep`, `md5sum`, `cut`, ...)
 
 
 ## Usage
