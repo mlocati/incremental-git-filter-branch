@@ -1,0 +1,5 @@
+#!/bin/sh
+
+. "$(cd -- "$(dirname -- "$0")" && pwd -P)/../bootstrap.sh"
+
+"${BIN_MAIN}" -- "${DIR_SOURCE}" b "${DIR_DESTINATION}"

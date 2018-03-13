@@ -1,0 +1,69 @@
+#!/bin/sh
+
+IS_TEST_CASE=0
+if ! . "$(cd -- "$(dirname -- "$0")" && pwd -P)/bootstrap.sh"
+then
+	echo 'Unable to find bootstrap script'>&2
+	exit 1
+fi
+
+wantedFilter=''
+if test $# -eq 1
+then
+	wantedFilter="${1}"
+else
+	wantedFilter=''
+fi
+
+someTestExecuted=0
+for testFile in "${DIR_TESTCASES}"/*
+do
+	fullTestName="$(basename "${testFile}")"
+	testName=${fullTestName%.success}
+	if test "${fullTestName}" != "${testName}"
+	then
+		should='succeed'
+	else
+		testName=${fullTestName%.fail}
+		if test "${fullTestName}" != "${testName}"
+		then
+			should='fail'
+		else
+			printf 'Unrecognized test case: %s\n', "${fullTestName}"
+			exit 1
+		fi
+	fi
+	if test -z "${wantedFilter}" -o "${testName}" = "${wantedFilter}"
+	then
+		printf '%s should %s... ' "${testName}" "${should}"
+		case "${should}" in
+			'succeed')
+				if testOutput="$(${testFile} 2>&1)"
+				then
+					printf 'ok.\n'
+				else
+					printf 'FAILED!\n'
+					printf '%s\n' "${testOutput}" >&2
+					exit 1
+				fi
+				;;
+			'fail')
+				if testOutput="$(${testFile} 2>&1)"
+				then
+					printf 'FAILED!\n'
+					printf '%s\n' "${testOutput}" >&2
+					exit 1
+				else
+					printf 'ok.\n'
+				fi
+				;;
+		esac
+		someTestExecuted=1
+	fi
+done
+
+if test ${someTestExecuted} -eq 0
+then
+	echo 'No test found!'>&2
+	exit 1
+fi
