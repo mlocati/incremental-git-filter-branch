@@ -482,6 +482,7 @@ processBranch () {
 			processBranch_tagNameFilter='read -r tag; printf "filter-branch/converted-tags/%s" "${tag}"'
 		fi
 		# shellcheck disable=SC2086
+		rm -rf "${WORKER_REPOSITORY_DIR}.map"
 		if git -C "${WORKER_REPOSITORY_DIR}" filter-branch \
 			${FILTER} \
 			--remap-to-ancestor \
@@ -518,7 +519,7 @@ getWorkingTagHash () {
 
 getTranslatedNearestCommitHash () {
 	getTranslatedNearestCommitHash_originalHash="${1}"
-	getTranslatedNearestCommitHash_translatedHash="$(printf '%s' "${TRANSLATION_MAP}" | grep -E "^${getTranslatedNearestCommitHash_originalHash}:" | sed -E 's_^.+?:__')"
+	getTranslatedNearestCommitHash_translatedHash="$(cat "${WORKER_REPOSITORY_DIR}.map" | grep -E "^${getTranslatedNearestCommitHash_originalHash}:" | sed -E 's_^.+?:__')"
 	if test -n "${getTranslatedNearestCommitHash_translatedHash}"
 	then
 		printf '%s' "${getTranslatedNearestCommitHash_translatedHash}"
@@ -547,7 +548,10 @@ processNotConvertedTag () {
 		printf 'Failed to get hash of tag %s\n' "${processNotConvertedTag_tag}">&2
 		exit 1
 	fi
-	TRANSLATION_MAP="$(git -C "${WORKER_REPOSITORY_DIR}" show refs/filter-branch/state:filter.map)"
+	if test ! -f "${WORKER_REPOSITORY_DIR}.map"
+	then
+		git -C "${WORKER_REPOSITORY_DIR}" show refs/filter-branch/state:filter.map >"${WORKER_REPOSITORY_DIR}.map"
+	fi
 	if processNotConvertedTag_commitHash="$(getTranslatedNearestCommitHash "${processNotConvertedTag_tagOriginalHash}")"
 	then
 		printf '%s -> filter-branch/converted-tags/%s (%s -> %s)\n' "${processNotConvertedTag_tag}" "${processNotConvertedTag_tag}" "${processNotConvertedTag_tagOriginalHash}" "${processNotConvertedTag_commitHash}"
