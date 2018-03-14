@@ -4,13 +4,13 @@
 		{
 			"type": "bashdb",
 			"request": "launch",
-			"name": "Bash-Debug (simplest configuration)",
-			"program": "${file}",
+			"name": "incremental-git-filterbranch",
+			"showDebugOutput": false,
+			"trace": false,
+			"cwd": "${workspaceFolder}/test",
+			"program": "all-tests.sh",
 			"osx": {
 				"pathPkill": "/usr/bin/pkill"
-			},
-			"windows": {
-				"pathBash": "C:/Windows/System32/bash.exe"
 			}
 		}
 	]
