@@ -47,7 +47,7 @@ Where:
 	By default, all branches will be processed.
 --tags
    how tags should be processed. This can be one of these values:
-      visited: process only the tags visited (default)
+	  visited: process only the tags visited (default)
 	  none: do not process any tag
 	  all: process all tags
 --blacklist <blacklist>
@@ -194,13 +194,10 @@ readParameters () {
 
 absolutizeUrl () {
 	absolutizeUrl_url="${1}"
-	case "${absolutizeUrl_url}" in
-		[/\\]* | ?*:*)
-			;;
-		*)
-			absolutizeUrl_url=$(cd "${absolutizeUrl_url}" && pwd)
-			;;
-	esac
+	if test -d "${1}"
+	then
+		absolutizeUrl_url=$(cd "${absolutizeUrl_url}" && pwd)
+	fi
 	printf '%s' "${absolutizeUrl_url}"
 }
 
