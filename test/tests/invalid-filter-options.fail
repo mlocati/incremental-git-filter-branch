@@ -2,4 +2,4 @@
 
 . "$(cd -- "$(dirname -- "$0")" && pwd -P)/../bootstrap.sh"
 
-"${BIN_MAIN}" -- "${DIR_SOURCE}" b "${DIR_DESTINATION}"
+"${BIN_MAIN}" --workdir "${DIR_TEMP}" -- "${DIR_SOURCE}" b "${DIR_DESTINATION}"

@@ -26,62 +26,65 @@ then
 	exit 1
 fi
 
-alias git-source='git -C "${DIR_SOURCE}"'
-alias git-destination='git -C "${DIR_DESTINATION}"'
-
 initializeRepositories () {
 	rm -rf "${DIR_TEMP}"
 	mkdir "${DIR_TEMP}"
 
 	git init --quiet "${DIR_SOURCE}"
-	git-source config --local user.email 'email@example.com'
-	git-source config --local user.name 'John Doe'
-
-	echo 'test'>"${DIR_SOURCE}/in-root"
-	git-source add --all
-	git-source commit --quiet --message 'Commit #1'
-	git-source tag tag-01
-
+	git -C "${DIR_SOURCE}" config --local user.email 'email@example.com'
+	git -C "${DIR_SOURCE}" config --local user.name 'John Doe'
 	mkdir "${DIR_SOURCE}/subdir"
-	echo 'test'>"${DIR_SOURCE}/subdir/subfile"
-	git-source add --all
-	git-source commit --quiet --message 'Commit #2'
 
-	git-source tag tag-02
+	touch "${DIR_SOURCE}/rootfile1"
+	git -C "${DIR_SOURCE}" add --all
+	git -C "${DIR_SOURCE}" commit --quiet --message 'Commit #1'
 
-	echo 'test'>>"${DIR_SOURCE}/in-root"
-	git-source add --all
-	git-source commit --quiet --message 'Commit #3'
+	git -C "${DIR_SOURCE}" tag tag-01
 
-	git-source tag tag-03
+	touch "${DIR_SOURCE}/subdir/subfile1"
+	git -C "${DIR_SOURCE}" add --all
+	git -C "${DIR_SOURCE}" commit --quiet --message 'Commit #2'
+
+	touch "${DIR_SOURCE}/subdir/subfile2"
+	git -C "${DIR_SOURCE}" add --all
+	git -C "${DIR_SOURCE}" commit --quiet --message 'Commit #3'
+
+	git -C "${DIR_SOURCE}" tag tag-02
+
+	touch "${DIR_SOURCE}/subdir/subfile3"
+	git -C "${DIR_SOURCE}" add --all
+	git -C "${DIR_SOURCE}" commit --quiet --message 'Commit #4'
+
+	touch "${DIR_SOURCE}/rootfile2"
+	git -C "${DIR_SOURCE}" add --all
+	git -C "${DIR_SOURCE}" commit --quiet --message 'Commit #5'
+
+	git -C "${DIR_SOURCE}" tag tag-03
 	
-	echo 'test'>>"${DIR_SOURCE}/in-root"
-	git-source add --all
-	git-source commit --quiet --message 'Commit #3'
+	touch "${DIR_SOURCE}/rootfile3"
+	git -C "${DIR_SOURCE}" add --all
+	git -C "${DIR_SOURCE}" commit --quiet --message 'Commit #6'
+
+	touch "${DIR_SOURCE}/subdir/subfile3b"
+	git -C "${DIR_SOURCE}" add --all
+	git -C "${DIR_SOURCE}" commit --quiet --message 'Commit #4b'
+
+	git  -C "${DIR_SOURCE}" checkout --quiet -b slave tag-02
+
+	touch "${DIR_SOURCE}/in-root-2"
+	git -C "${DIR_SOURCE}" add --all
+	git -C "${DIR_SOURCE}" commit --quiet --message 'Commit #7'
+
+	git -C "${DIR_SOURCE}" tag tag-04
+
+	touch "${DIR_SOURCE}/in-root-3"
+	git -C "${DIR_SOURCE}" add --all
+	git -C "${DIR_SOURCE}" commit --quiet --message 'Commit #8'
 
 	git init --bare --quiet "${DIR_DESTINATION}"
 }
 
 getTagList () {
-	printf '%s\n' $(git -C "${1}" show-ref --tags | sed -E 's:^.*?refs/tags/::' || true)
-}
-
-itemInList () {
-	for itemInListItem in ${2}
-	do
-		if test "${1}" = "${itemInListItem}"
-		then
-			return 0
-		fi
-	done
-	return 1
-}
-
-itemNotInList () {
-	if itemInList "${1}" "${2}"
-	then
-		return 1
-	else
-		return 0
-	fi
+	getTagList_multiline=$(git -C "${1}" show-ref --tags | sed -E 's:^.*?refs/tags/::' || true)
+	printf '%s' "${getTagList_multiline}" | sort -b | tr '\n' ' ' | sed -E 's:^ | $::g'
 }

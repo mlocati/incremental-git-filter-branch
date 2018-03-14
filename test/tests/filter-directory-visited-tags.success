@@ -1,25 +1,16 @@
 #!/bin/sh
 
-. "$(cd -- "$(dirname -- "$0")" && pwd -P)/../bootstrap.sh"
+. "$(cd -- "$(dirname -- "${0}")" && pwd -P)/../bootstrap.sh"
 
 initializeRepositories
 
-"${BIN_MAIN}" "${DIR_SOURCE}" '--prune-empty --subdirectory-filter subdir' "${DIR_DESTINATION}"
+"${BIN_MAIN}" --workdir "${DIR_TEMP}" --whitelist 'master' -- "${DIR_SOURCE}" '--prune-empty --subdirectory-filter subdir' "${DIR_DESTINATION}"
 
 echo 'Fetching tags'
-tags=$(getTagList "${DIR_DESTINATION}")
-if itemInList 'tag-01' "${tags}"
+actualTags="$(getTagList "${DIR_DESTINATION}")"
+expectedTags='tag-02'
+if test "${actualTags}" != "${expectedTags}"
 then
-	printf '%s should not be in tag list:\n%s\n' 'tag-01' "${tags}" >&2
-	exit 1
-fi
-if itemNotInList 'tag-02' "${tags}"
-then
-	printf '%s should be in tag list:\n%s\n' 'tag-02' "${tags}" >&2
-	exit 1
-fi
-if itemInList 'tag-03' "${tags}"
-then
-	printf '%s should not be in tag list:\n%s\n' 'tag-02' "${tags}" >&2
+	printf 'Expected tags: %s\nResulting tags: %s\n' "${expectedTags}" "${actualTags}">&2
 	exit 1
 fi
