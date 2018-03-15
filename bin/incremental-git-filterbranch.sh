@@ -32,6 +32,7 @@ usage () {
 ${0} [-h | --help] [--workdir <workdirpath>]
 	[--whitelist <whitelist>] [--blacklist <blacklist>]
 	[--tags (visited|all|none)]
+	[--tags-max-history-lookup <depth>]
 	[--no-hardlinks] [--no-atomic] [--no-lock] [--]
 	<sourcerepository> <filter> <destinationrepository>
 	Apply git filter-branch in an incremental way
@@ -50,6 +51,9 @@ Where:
 	  visited: process only the tags visited (default)
 	  none: do not process any tag
 	  all: process all tags
+--tags-max-history-lookup
+	limit the depth when looking for best matched filtered commit when --tags is 'all'.
+	By default this value is 20.
 --blacklist <blacklist>
 	a whitespace-separated list of branches to be excluded from the process.
 	Multiple options can be specified.
@@ -83,6 +87,7 @@ readParameters () {
 	ATOMIC='--atomic'
 	NO_LOCK=''
 	PROCESS_TAGS='visited'
+	PROCESS_TAGS_MAXHISTORYLOOKUP=20
 	while :
 	do
 		if test $# -lt 1
@@ -145,6 +150,22 @@ readParameters () {
 						usage 'Invalid value of the --tags option'
 						;;
 				esac
+				shift 2
+				;;
+			--tags-max-history-lookup)
+				if test $# -lt 2
+				then
+					usage 'Not enough arguments'
+				fi
+				PROCESS_TAGS_MAXHISTORYLOOKUP="${BRANCH_BLACKLIST} ${2}"
+				if ! test "${PROCESS_TAGS_MAXHISTORYLOOKUP}" -eq "${PROCESS_TAGS_MAXHISTORYLOOKUP}" 2>/dev/null
+				then
+					usage "Value of ${readParameters_currentArgument} should be numeric"
+				fi
+				if test "${PROCESS_TAGS_MAXHISTORYLOOKUP}" -lt 1
+				then
+					usage "Value of ${readParameters_currentArgument} should be greater than 0"
+				fi
 				shift 2
 				;;
 			--no-hardlinks)
@@ -261,30 +282,13 @@ checkEnvironment () {
 			die 'The flock command is not available. You may want to use --no-lock option to avoid using it (but no concurrency check will be performed).'
 		fi
 	fi
-	if ! command -v git >/dev/null
-	then
-		die 'The required git command is not available.'
-	fi
-	if ! command -v sed >/dev/null
-	then
-		die 'The required sed command is not available.'
-	fi
-	if ! command -v grep >/dev/null
-	then
-		die 'The required grep command is not available.'
-	fi
-	if ! command -v cut >/dev/null
-	then
-		die 'The required cut command is not available.'
-	fi
-	if ! command -v sort >/dev/null
-	then
-		die 'The required sort command is not available.'
-	fi
-	if ! command -v md5sum >/dev/null
-	then
-		die 'The required md5sum command is not available.'
-	fi
+	for checkEnvironment_command in git sed grep md5sum
+	do
+		if ! command -v "${checkEnvironment_command}" >/dev/null
+		then
+			die "The required ${checkEnvironment_command} command is not available."
+		fi
+	done
 	checkEnvironment_vMin='2.15.0'
 	checkEnvironment_vCur=$(git --version | cut -d ' ' -f3)
 	checkEnvironment_vWork=$(printf '%s\n%s' "${checkEnvironment_vCur}" "${checkEnvironment_vMin}" | sort -t '.' -n -k1,1 -k2,2 -k3,3 -k4,4 | head -n 1)
@@ -351,10 +355,12 @@ getSourceRepositoryTagsInBranch () {
 	git -C "${SOURCE_REPOSITORY_DIR}" tag --list --merged "refs/heads/${1}" 2>/dev/null || true
 }
 
+
 getTagList () {
 	# List all tags and takes only the part after "refs/heads/"
 	git -C "${1}" show-ref --tags | sed -E 's:^.*?refs/tags/::' || true
 }
+
 
 branchInList () {
 	branchInList_branch="${1}"
@@ -383,6 +389,7 @@ branchInList () {
 	return 1
 }
 
+
 getBranchesToProcess () {
 	echo '# Determining branches to be processed'
 	WORK_BRANCHES=''
@@ -409,6 +416,7 @@ getBranchesToProcess () {
 		die 'None of the source branches passes the whitelist/blacklist filter'
 	fi
 }
+
 
 prepareWorkerRepository () {
 	prepareWorkerRepository_haveToCreateRepo=1
@@ -440,6 +448,7 @@ prepareWorkerRepository () {
 		fi
 	fi
 }
+
 
 processBranch () {
 	processBranch_branch="${1}"
@@ -478,9 +487,10 @@ processBranch () {
 			# shellcheck disable=SC2016
 			processBranch_tagNameFilter='read -r tag; printf "filter-branch/converted-tags/%s" "${tag}"'
 		fi
-		# shellcheck disable=SC2086
 		rm -rf "${WORKER_REPOSITORY_DIR}.map"
-		if git -C "${WORKER_REPOSITORY_DIR}" filter-branch \
+		exec 3>&1
+		# shellcheck disable=SC2086
+		if processBranch_stdErr=$(git -C "${WORKER_REPOSITORY_DIR}" filter-branch \
 			${FILTER} \
 			--remap-to-ancestor \
 			--tag-name-filter "${processBranch_tagNameFilter}" \
@@ -488,8 +498,22 @@ processBranch () {
 			--original "refs/filter-branch/originals/${processBranch_branch}" \
 			--state-branch "refs/filter-branch/state" \
 			--force \
-			-- "${processBranch_range}"
+			-- "${processBranch_range}" \
+			1>&3 2>&1 | tee /dev/stderr
+		)
 		then
+			processBranch_rc=0
+		else
+			processBranch_rc=1
+		fi
+		exec 3>&-
+		if test "${processBranch_rc}" -ne 0
+		then
+			if test -n "${processBranch_stdErr##*Found nothing to rewrite*}"
+			then
+				die 'git failed'
+			fi
+		else
 			if test "${PROCESS_TAGS}" = 'all' -a -n "${processBranch_tags}"
 			then
 				processBranchTag_availableTags="$(git -C "${WORKER_REPOSITORY_DIR}" tag --list | grep -E '^filter-branch/converted-tags/' | sed -E 's:^filter-branch/converted-tags/::')"
@@ -501,35 +525,38 @@ processBranch () {
 					fi
 				done
 			fi
-		else
-			# May fail with "Found nothing to rewrite"
-			:
 		fi
 		echo "  - storing state"
 		git -C "${WORKER_REPOSITORY_DIR}" branch -f "filter-branch/filtered/${processBranch_branch}" FETCH_HEAD
 	fi
 }
 
+
 getWorkingTagHash () {
-	git -C "${WORKER_REPOSITORY_DIR}" tag -l --format='%(objectname)' -- "${1}"
+	git -C "${WORKER_REPOSITORY_DIR}" rev-list -n 1 "refs/tags/${1}" 2>/dev/null || true
 }
 
+
 getTranslatedNearestCommitHash () {
-	getTranslatedNearestCommitHash_originalHash="${1}"
-	getTranslatedNearestCommitHash_translatedHash="$(cat "${WORKER_REPOSITORY_DIR}.map" | grep -E "^${getTranslatedNearestCommitHash_originalHash}:" | sed -E 's_^.+?:__')"
-	if test -n "${getTranslatedNearestCommitHash_translatedHash}"
+	# $1: the original hash
+	# $2 the allowed history depth
+	if test "${2}" -lt 1 -o -z "${PROCESS_TAGS_VISITEDHASHES##* ${1} *}"
 	then
-		printf '%s' "${getTranslatedNearestCommitHash_translatedHash}"
+		return 1
+	fi
+	PROCESS_TAGS_VISITEDHASHES="${PROCESS_TAGS_VISITEDHASHES}${1} "
+	if getTranslatedNearestCommitHash_v="$(grep -E "^${1}:" "${WORKER_REPOSITORY_DIR}.map")"
+	then
+		printf '%s' "${getTranslatedNearestCommitHash_v#${1}:}"
 		return 0
 	fi
-	getTranslatedNearestCommitHash_originalHashParents="$(git -C "${WORKER_REPOSITORY_DIR}" rev-list --parents -n 1 "${getTranslatedNearestCommitHash_originalHash}")"
-	for getTranslatedNearestCommitHash_originalHashParent in ${getTranslatedNearestCommitHash_originalHashParents}
+	for getTranslatedNearestCommitHash_v in $(git -C "${WORKER_REPOSITORY_DIR}" rev-list --parents -n 1 "${1}")
 	do
-		if test "${getTranslatedNearestCommitHash_originalHashParent}" != "${getTranslatedNearestCommitHash_originalHash}"
+		if test "${getTranslatedNearestCommitHash_v}" != "${1}"
 		then
-			if getTranslatedNearestCommitHash_translatedHash="$(getTranslatedNearestCommitHash "${getTranslatedNearestCommitHash_originalHashParent}")"
+			if getTranslatedNearestCommitHash_v="$(getTranslatedNearestCommitHash "${getTranslatedNearestCommitHash_v}" "$(( $2 - 1))")"
 			then
-				printf '%s' "${getTranslatedNearestCommitHash_translatedHash}"
+				printf '%s' "${getTranslatedNearestCommitHash_v}"
 				return 0
 			fi
 		fi
@@ -537,8 +564,10 @@ getTranslatedNearestCommitHash () {
 	return 1
 }
 
+
 processNotConvertedTag () {
 	processNotConvertedTag_tag="${1}"
+	printf '  - remapping tag %s\n' "${processNotConvertedTag_tag}"
 	processNotConvertedTag_tagOriginalHash="$(getWorkingTagHash "${processNotConvertedTag_tag}")"
 	if test -z "${processNotConvertedTag_tagOriginalHash}"
 	then
@@ -549,7 +578,8 @@ processNotConvertedTag () {
 	then
 		git -C "${WORKER_REPOSITORY_DIR}" show refs/filter-branch/state:filter.map >"${WORKER_REPOSITORY_DIR}.map"
 	fi
-	if processNotConvertedTag_commitHash="$(getTranslatedNearestCommitHash "${processNotConvertedTag_tagOriginalHash}")"
+	PROCESS_TAGS_VISITEDHASHES=' '
+	if processNotConvertedTag_commitHash="$(getTranslatedNearestCommitHash "${processNotConvertedTag_tagOriginalHash}" "${PROCESS_TAGS_MAXHISTORYLOOKUP}")"
 	then
 		printf '%s -> filter-branch/converted-tags/%s (%s -> %s)\n' "${processNotConvertedTag_tag}" "${processNotConvertedTag_tag}" "${processNotConvertedTag_tagOriginalHash}" "${processNotConvertedTag_commitHash}"
 		git -C "${WORKER_REPOSITORY_DIR}" tag --force "filter-branch/converted-tags/${processNotConvertedTag_tag}" "${processNotConvertedTag_commitHash}"
@@ -557,6 +587,7 @@ processNotConvertedTag () {
 		printf 'Failed to map tag %s\n' "${processNotConvertedTag_tag}">&2
 	fi
 }
+
 
 processBranches () {
 	processBranches_pushRefSpec=''
@@ -582,9 +613,11 @@ processBranches () {
 	git -C "${WORKER_REPOSITORY_DIR}" push --quiet --force ${ATOMIC} destination ${processBranches_pushRefSpec}
 }
 
+
 md5 () {
 	printf '%s' "${1}" | md5sum | sed -E 's: .*$::'
 }
+
 
 itemInList () {
 	for itemInList_item in ${2}
@@ -596,6 +629,7 @@ itemInList () {
 	done
 	return 1
 }
+
 
 readParameters "$@"
 normalizeParameters
