@@ -1,0 +1,31 @@
+{
+    "name": "mlocati/incremental-git-filter-branch",
+    "description": "Shell script to call git filter-branch in an incremental way",
+    "type": "library",
+    "keywords": [
+        "git",
+        "filter-branch",
+        "incremental",
+        "progressive",
+        "shell",
+        "bash",
+        "posix"
+    ],
+    "homepage": "https://github.com/mlocati/incremental-git-filter-branch",
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "Michele Locati",
+            "email": "michele@locati.it",
+            "homepage": "https://mlocati.github.io",
+            "role": "author"
+        }
+    ],
+    "support": {
+        "issues": "https://github.com/mlocati/incremental-git-filter-branch/issues",
+        "source": "https://github.com/mlocati/incremental-git-filter-branch"
+    },
+    "bin": [
+        "bin/incremental-git-filterbranch"
+    ]
+}
