@@ -1,0 +1,16 @@
+#!/bin/sh
+
+. "$(cd -- "$(dirname -- "${0}")" && pwd -P)/../bootstrap.sh"
+
+initializeRepositories
+
+"${BIN_MAIN}" --workdir "${DIR_TEMP}" --branch-whitelist 'master' --tag-blacklist 'tag-02' -- "${DIR_SOURCE}" '--prune-empty --subdirectory-filter subdir' "${DIR_DESTINATION}"
+
+echo 'Fetching tags'
+actualTags="$(getTagList "${DIR_DESTINATION}")"
+expectedTags=''
+if test "${actualTags}" != "${expectedTags}"
+then
+	printf 'Expected tags: %s\nResulting tags with blacklist: %s\n' "${expectedTags}" "${actualTags}">&2
+	exit 1
+fi

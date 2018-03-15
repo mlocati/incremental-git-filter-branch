@@ -31,6 +31,7 @@ usage () {
 	printf '%s' "Usage:
 ${0} [-h | --help] [--workdir <workdirpath>]
 	[--branch-whitelist <whitelist>] [--branch-blacklist <blacklist>]
+	[--tag-whitelist <whitelist>] [--tag-blacklist <blacklist>]
 	[--tags-plan (visited|all|none)]
 	[--tags-max-history-lookup <depth>]
 	[--no-hardlinks] [--no-atomic] [--no-lock] [--]
@@ -43,7 +44,7 @@ Where:
 	set the path to the directory where the temporary local repositories are created.
 	By default, we'll use a directory named temp in the current directory.
 --branch-whitelist <whitelist>
-	a whitespace-separated list of branches be included in the process.
+	a whitespace-separated list of branches to be included in the process.
 	Multiple options can be specified.
 	By default, all branches will be processed.
 --branch-blacklist <blacklist>
@@ -51,6 +52,13 @@ Where:
 	Multiple options can be specified.
 	By default, all branches will be processed.
 	Blacklisted branches take the precedence over whitelisted ones.
+--tag-whitelist <whitelist>
+	a whitespace-separated list of tags to be included in the process.
+	Multiple options can be specified.
+--tag-blacklist <blacklist>
+	a whitespace-separated list of tags to be excluded from the process.
+	Multiple options can be specified.
+	Blacklisted tags take the precedence over whitelisted ones.
 --tags-plan
    how tags should be processed. This can be one of these values:
 	  visited: process only the tags visited (default)
@@ -72,7 +80,7 @@ filter
 destinationrepository
 	The URL or path to the destination repository.
 
-You can prefix branch names in both whitelist and blacklist with 'rx:': in this case a regular expression check will be performed.
+You can prefix branch/tag names in both whitelists and blacklists with 'rx:': in this case a regular expression check will be performed.
 For instance: --branch-whitelist 'master rx:release\\/\\d+(\\.\\d+)*' will match 'master' and 'release/1.1'
 "
 	exit 0
@@ -83,11 +91,13 @@ readParameters () {
 	WORK_DIRECTORY="$(pwd)/temp"
 	BRANCH_WHITELIST=''
 	BRANCH_BLACKLIST=''
+	TAG_WHITELIST=''
+	TAG_BLACKLIST=''
+	TAGS_PLAN='visited'
+	PROCESS_TAGS_MAXHISTORYLOOKUP=20
 	NO_HARDLINKS=''
 	ATOMIC='--atomic'
 	NO_LOCK=''
-	PROCESS_TAGS='visited'
-	PROCESS_TAGS_MAXHISTORYLOOKUP=20
 	while :
 	do
 		if test $# -lt 1
@@ -131,6 +141,22 @@ readParameters () {
 				BRANCH_BLACKLIST="${BRANCH_BLACKLIST} ${2}"
 				shift 2
 				;;
+			--tag-whitelist)
+				if test $# -lt 2
+				then
+					usage 'Not enough arguments'
+				fi
+				TAG_WHITELIST="${TAG_WHITELIST} ${2}"
+				shift 2
+				;;
+			--tag-blacklist)
+				if test $# -lt 2
+				then
+					usage 'Not enough arguments'
+				fi
+				TAG_BLACKLIST="${TAG_BLACKLIST} ${2}"
+				shift 2
+				;;
 			--tags-plan)
 				if test $# -lt 2
 				then
@@ -138,13 +164,13 @@ readParameters () {
 				fi
 				case "${2}" in
 					'all')
-						PROCESS_TAGS='all'
+						TAGS_PLAN='all'
 						;;
 					'visited')
-						PROCESS_TAGS='visited'
+						TAGS_PLAN='visited'
 						;;
 					'none')
-						PROCESS_TAGS=''
+						TAGS_PLAN=''
 						;;
 					*)
 						usage "Invalid value of the ${readParameters_currentArgument} option"
@@ -188,6 +214,13 @@ readParameters () {
 				;;
 		esac
 	done
+	if test -z "${TAGS_PLAN}"
+	then
+		if test -n "${TAG_WHITELIST}" -o -n "${TAG_BLACKLIST}"
+		then
+			die "You can't use --tag-whitelist or --tag-blacklist when you specify '--tags-plan none'"
+		fi
+	fi
 	if test $# -lt 3
 	then
 		usage 'Not enough arguments'
@@ -213,6 +246,7 @@ readParameters () {
 	fi
 }
 
+
 absolutizeUrl () {
 	absolutizeUrl_url="${1}"
 	if test -d "${1}"
@@ -221,6 +255,7 @@ absolutizeUrl () {
 	fi
 	printf '%s' "${absolutizeUrl_url}"
 }
+
 
 checkFilter () {
 	checkFilter_some=0
@@ -264,6 +299,7 @@ checkFilter () {
 	fi
 }
 
+
 normalizeParameters () {
 	echo '# Normalizing source repository URL'
 	SOURCE_REPOSITORY_URL=$(absolutizeUrl "${SOURCE_REPOSITORY_URL}")
@@ -273,6 +309,7 @@ normalizeParameters () {
 	# shellcheck disable=SC2086
 	checkFilter ${FILTER}
 }
+
 
 checkEnvironment () {
 	if test -z "${NO_LOCK}"
@@ -362,23 +399,23 @@ getTagList () {
 }
 
 
-branchInList () {
-	branchInList_branch="${1}"
-	branchInList_list="${2}"
-	for branchInList_listItem in ${branchInList_list}
+stringInList () {
+	stringInList_string="${1}"
+	stringInList_list="${2}"
+	for stringInList_listItem in ${stringInList_list}
 	do
-		if test -n "${branchInList_listItem}"
+		if test -n "${stringInList_listItem}"
 		then
-			case "${branchInList_listItem}" in
+			case "${stringInList_listItem}" in
 				rx:*)
-					branchInList_substring=$(printf '%s' "${branchInList_listItem}" | cut -c4-)
-					if printf '%s' "${branchInList_branch}" | grep -Eq "^${branchInList_substring}$"
+					stringInList_substring=$(printf '%s' "${stringInList_listItem}" | cut -c4-)
+					if printf '%s' "${stringInList_string}" | grep -Eq "^${stringInList_substring}$"
 					then
 						return 0
 					fi
 					;;
 				*)
-					if test "${branchInList_branch}" = "${branchInList_listItem}"
+					if test "${stringInList_string}" = "${stringInList_listItem}"
 					then
 						return 0
 					fi
@@ -390,25 +427,34 @@ branchInList () {
 }
 
 
+# $1: the string
+# $2: the whitelist
+# $3: the blacklist
+stringPassesLists () {
+	if stringInList "${1}" "${3}"
+	then
+		return 1
+	fi
+	if test -z "${2}"
+	then
+		return 0
+	fi
+	if stringInList "${1}" "${2}"
+	then
+		return 0
+	fi
+	return 1
+}
+
+
 getBranchesToProcess () {
 	echo '# Determining branches to be processed'
 	WORK_BRANCHES=''
 	for getBranchesToProcess_sourceBranch in ${SOURCE_BRANCHES}
 	do
-		if ! branchInList "${getBranchesToProcess_sourceBranch}" "${BRANCH_BLACKLIST}"
+		if stringPassesLists "${getBranchesToProcess_sourceBranch}" "${BRANCH_WHITELIST}" "${BRANCH_BLACKLIST}"
 		then
-			getBranchesToProcess_branchPassed=''
-			if test -z "${BRANCH_WHITELIST}"
-			then
-				getBranchesToProcess_branchPassed='yes'
-			elif branchInList "${getBranchesToProcess_sourceBranch}" "${BRANCH_WHITELIST}"
-			then
-				getBranchesToProcess_branchPassed='yes'
-			fi
-			if test -n "${getBranchesToProcess_branchPassed}"
-			then
-				WORK_BRANCHES="${WORK_BRANCHES} ${getBranchesToProcess_sourceBranch}"
-			fi
+			WORK_BRANCHES="${WORK_BRANCHES} ${getBranchesToProcess_sourceBranch}"
 		fi
 	done
 	if test -z "${WORK_BRANCHES}"
@@ -474,7 +520,7 @@ processBranch () {
 		rm -rf "${WORKER_REPOSITORY_DIR}.filter-branch"
 		echo "  - filtering commits"
 		processBranch_tags=''
-		if test -z "${PROCESS_TAGS}"
+		if test -z "${TAGS_PLAN}"
 		then
 			processBranch_tags=''
 		else
@@ -514,14 +560,20 @@ processBranch () {
 				die 'git failed'
 			fi
 		else
-			if test "${PROCESS_TAGS}" = 'all' -a -n "${processBranch_tags}"
+			if test "${TAGS_PLAN}" = 'all' -a -n "${processBranch_tags}"
 			then
-				processBranchTag_availableTags="$(git -C "${WORKER_REPOSITORY_DIR}" tag --list | grep -E '^filter-branch/converted-tags/' | sed -E 's:^filter-branch/converted-tags/::')"
+				if ! processBranchTag_availableTags="$(git -C "${WORKER_REPOSITORY_DIR}" tag --list | grep -E '^filter-branch/converted-tags/' | sed -E 's:^filter-branch/converted-tags/::')"
+				then
+					processBranchTag_availableTags=''
+				fi
 				for processBranch_tag in ${processBranch_tags}
 				do
  					if ! itemInList "${processBranch_tag}" "${processBranchTag_availableTags}"
 					then
-						processNotConvertedTag "${processBranch_tag}"
+						if stringPassesLists "${processBranch_tag}" "${TAG_WHITELIST}" "${TAG_BLACKLIST}"
+						then
+							processNotConvertedTag "${processBranch_tag}"
+						fi
 					fi
 				done
 			fi
@@ -597,17 +649,23 @@ processBranches () {
 		processBranch "${processBranches_branch}"
 		processBranches_pushRefSpec="${processBranches_pushRefSpec} filter-branch/result/${processBranches_branch}:${processBranches_branch}"
 	done
-	echo '# Listing source tags'
-	processBranches_sourceTags=$(getTagList "${SOURCE_REPOSITORY_DIR}")
-	echo '# Determining destination tags'
-	for processBranches_sourceTag in ${processBranches_sourceTags}
-	do
-		processBranches_rewrittenTag="filter-branch/converted-tags/${processBranches_sourceTag}"
-		if git -C "${WORKER_REPOSITORY_DIR}" rev-list --max-count=0 "${processBranches_rewrittenTag}" 2>/dev/null
-		then
-			processBranches_pushRefSpec="${processBranches_pushRefSpec} ${processBranches_rewrittenTag}:${processBranches_sourceTag}"
-		fi
-	done
+	if test -n "${TAGS_PLAN}"
+	then
+		echo '# Listing source tags'
+		processBranches_sourceTags=$(getTagList "${SOURCE_REPOSITORY_DIR}")
+		echo '# Determining destination tags'
+		for processBranches_sourceTag in ${processBranches_sourceTags}
+		do
+			if stringPassesLists "${processBranches_sourceTag}" "${TAG_WHITELIST}" "${TAG_BLACKLIST}"
+			then
+				processBranches_rewrittenTag="filter-branch/converted-tags/${processBranches_sourceTag}"
+				if git -C "${WORKER_REPOSITORY_DIR}" rev-list --max-count=0 "${processBranches_rewrittenTag}" 2>/dev/null
+				then
+					processBranches_pushRefSpec="${processBranches_pushRefSpec} ${processBranches_rewrittenTag}:${processBranches_sourceTag}"
+				fi
+			fi
+		done
+	fi
 	echo "# Pushing to destination repository"
 	# shellcheck disable=SC2086
 	git -C "${WORKER_REPOSITORY_DIR}" push --quiet --force ${ATOMIC} destination ${processBranches_pushRefSpec}
