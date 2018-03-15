@@ -30,8 +30,8 @@ usage () {
 	fi
 	printf '%s' "Usage:
 ${0} [-h | --help] [--workdir <workdirpath>]
-	[--whitelist <whitelist>] [--blacklist <blacklist>]
-	[--tags (visited|all|none)]
+	[--branch-whitelist <whitelist>] [--branch-blacklist <blacklist>]
+	[--tags-plan (visited|all|none)]
 	[--tags-max-history-lookup <depth>]
 	[--no-hardlinks] [--no-atomic] [--no-lock] [--]
 	<sourcerepository> <filter> <destinationrepository>
@@ -42,23 +42,23 @@ Where:
 --workdir workdirpath
 	set the path to the directory where the temporary local repositories are created.
 	By default, we'll use a directory named temp in the current directory.
---whitelist <whitelist>
+--branch-whitelist <whitelist>
 	a whitespace-separated list of branches be included in the process.
 	Multiple options can be specified.
 	By default, all branches will be processed.
---tags
+--branch-blacklist <blacklist>
+	a whitespace-separated list of branches to be excluded from the process.
+	Multiple options can be specified.
+	By default, all branches will be processed.
+	Blacklisted branches take the precedence over whitelisted ones.
+--tags-plan
    how tags should be processed. This can be one of these values:
 	  visited: process only the tags visited (default)
 	  none: do not process any tag
 	  all: process all tags
 --tags-max-history-lookup
-	limit the depth when looking for best matched filtered commit when --tags is 'all'.
+	limit the depth when looking for best matched filtered commit when --tags-plan is 'all'.
 	By default this value is 20.
---blacklist <blacklist>
-	a whitespace-separated list of branches to be excluded from the process.
-	Multiple options can be specified.
-	By default, all branches will be processed.
-	Blacklisted branches take the precedence over whitelisted ones.
 --no-hardlinks
 	Do not create hard links (useful for file systems that don't support it).
 --no-atomic
@@ -73,7 +73,7 @@ destinationrepository
 	The URL or path to the destination repository.
 
 You can prefix branch names in both whitelist and blacklist with 'rx:': in this case a regular expression check will be performed.
-For instance: --whitelist 'master rx:release\\/\\d+(\\.\\d+)*' will match 'master' and 'release/1.1'
+For instance: --branch-whitelist 'master rx:release\\/\\d+(\\.\\d+)*' will match 'master' and 'release/1.1'
 "
 	exit 0
 }
@@ -115,7 +115,7 @@ readParameters () {
 				fi
 				shift 2
 				;;
-			--whitelist)
+			--branch-whitelist)
 				if test $# -lt 2
 				then
 					usage 'Not enough arguments'
@@ -123,7 +123,7 @@ readParameters () {
 				BRANCH_WHITELIST="${BRANCH_WHITELIST} ${2}"
 				shift 2
 				;;
-			--blacklist)
+			--branch-blacklist)
 				if test $# -lt 2
 				then
 					usage 'Not enough arguments'
@@ -131,7 +131,7 @@ readParameters () {
 				BRANCH_BLACKLIST="${BRANCH_BLACKLIST} ${2}"
 				shift 2
 				;;
-			--tags)
+			--tags-plan)
 				if test $# -lt 2
 				then
 					usage 'Not enough arguments'
@@ -147,7 +147,7 @@ readParameters () {
 						PROCESS_TAGS=''
 						;;
 					*)
-						usage 'Invalid value of the --tags option'
+						usage "Invalid value of the ${readParameters_currentArgument} option"
 						;;
 				esac
 				shift 2
