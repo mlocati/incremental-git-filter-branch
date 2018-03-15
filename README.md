@@ -25,7 +25,7 @@ Get the script and read the syntax using the `--help` option.
 ## Examples
 
 ```sh
-./incremental-git-filterbranch.sh \
+./bin/incremental-git-filterbranch \
     --branch-whitelist 'develop master rx:release\/.*' \
     --tag-blacklist 'rx:5\..*' \
     --tags-plan all --tags-max-history-lookup 10 \

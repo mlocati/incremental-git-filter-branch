@@ -19,7 +19,7 @@ DIR_TEMP="${DIR_TEST}/temp"
 DIR_SOURCE="${DIR_TEMP}/source"
 DIR_DESTINATION="${DIR_TEMP}/destination"
 
-BIN_MAIN="${DIR_BIN}/incremental-git-filterbranch.sh"
+BIN_MAIN="${DIR_BIN}/incremental-git-filterbranch"
 if test ! -f "${BIN_MAIN}"
 then
 	echo 'Failed to detect environment'>&2

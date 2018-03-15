@@ -8,7 +8,7 @@
 			"showDebugOutput": false,
 			"trace": false,
 			"cwd": "${workspaceFolder}/test",
-			"program": "all-tests.sh",
+			"program": "run-tests",
 			"osx": {
 				"pathPkill": "/usr/bin/pkill"
 			}

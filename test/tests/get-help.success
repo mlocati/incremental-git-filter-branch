@@ -1,6 +1,6 @@
 #!/bin/sh
 
-. "$(cd -- "$(dirname -- "$0")" && pwd -P)/../bootstrap.sh"
+. "$(cd -- "$(dirname -- "$0")" && pwd -P)/../bootstrap"
 
 "${BIN_MAIN}" -h
 "${BIN_MAIN}" --help
