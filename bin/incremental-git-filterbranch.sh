@@ -17,11 +17,21 @@ set -o nounset
 IFS=' 	
 '
 
+# Exit with 1.
+#
+# Arguments:
+#   $1: the message to be printed
 die () {
 	printf '%s\n' "${1}">&2
 	exit 1
 }
 
+
+# Print the usage and exit.
+#
+# Arguments:
+#   $1 [optional]: if specified, a short usage message will be printed and we'll exit with 1;
+#                  if not specified: a full syntax will be printed and we'll exit with 0
 usage () {
 	if test $# -eq 1
 	then
@@ -87,6 +97,10 @@ For instance: --branch-whitelist 'master rx:release\\/\\d+(\\.\\d+)*' will match
 }
 
 
+# Parse the command arguments and exits in case of errors.
+#
+# Arguments:
+#   $@: all the command line parameters
 readParameters () {
 	WORK_DIRECTORY="$(pwd)/temp"
 	BRANCH_WHITELIST=''
@@ -234,37 +248,47 @@ readParameters () {
 	then
 		die 'The source repository location is empty.'
 	fi
+	SOURCE_REPOSITORY_URL=$(absolutizePath "${SOURCE_REPOSITORY_URL}")
 	FILTER="${2}"
 	if test -z "${FILTER}"
 	then
 		die 'The filter is empty.'
 	fi
+	checkFilter ${FILTER}
 	DESTINATION_REPOSITORY_URL="${3}"
 	if test -z "${DESTINATION_REPOSITORY_URL}"
 	then
 		die 'The destination repository location is empty.'
 	fi
+	DESTINATION_REPOSITORY_URL=$(absolutizePath "${DESTINATION_REPOSITORY_URL}")
 }
 
 
-absolutizeUrl () {
-	absolutizeUrl_url="${1}"
+# Check if a string is a directory. If so, return its absolute path, otherwise the string itself.
+#
+# Arguments:
+#   $1: the string to be checked
+#
+# Output:
+#   The absolute path (if found), or $1
+absolutizePath () {
 	if test -d "${1}"
 	then
-		absolutizeUrl_url=$(cd "${absolutizeUrl_url}" && pwd)
+		printf '%s' "$(cd "${1}" && pwd)"
+	else
+		printf '%s' "${1}"
 	fi
-	printf '%s' "${absolutizeUrl_url}"
 }
 
 
+# Check the contents of the <filter> argument and die in case of errors.
+#
+# Arguments:
+#   $@: all parts of the filter
 checkFilter () {
 	checkFilter_some=0
-	while :
+	while test $# -ge 1
 	do
-		if test $# -lt 1
-		then
-			break
-		fi
 		checkFilter_some=1
 		checkFilter_optName="${1}"
 		shift 1
@@ -300,17 +324,7 @@ checkFilter () {
 }
 
 
-normalizeParameters () {
-	echo '# Normalizing source repository URL'
-	SOURCE_REPOSITORY_URL=$(absolutizeUrl "${SOURCE_REPOSITORY_URL}")
-	echo '# Normalizing destination repository URL'
-	DESTINATION_REPOSITORY_URL=$(absolutizeUrl "${DESTINATION_REPOSITORY_URL}")
-	echo '# Checking filter'
-	# shellcheck disable=SC2086
-	checkFilter ${FILTER}
-}
-
-
+# Check that the system has the required commands, and exit in case of problems.
 checkEnvironment () {
 	if test -z "${NO_LOCK}"
 	then
@@ -336,15 +350,19 @@ checkEnvironment () {
 }
 
 
+# Initialize the working directory and associated variables, and exit in case of problems.
 initializeEnvironment () {
 	if ! test -d "${WORK_DIRECTORY}"
 	then
-		mkdir --parents -- "${WORK_DIRECTORY}" || die "Failed to create working directory ${WORK_DIRECTORY}"
+		mkdir --parents -- "${WORK_DIRECTORY}" || die "Failed to create the working directory ${WORK_DIRECTORY}"
 	fi
+	WORK_DIRECTORY=$(absolutizePath "${WORK_DIRECTORY}")
 	SOURCE_REPOSITORY_DIR=${WORK_DIRECTORY}/source-$(md5 "${SOURCE_REPOSITORY_URL}")
 	WORKER_REPOSITORY_DIR=${WORK_DIRECTORY}/worker-$(md5 "${SOURCE_REPOSITORY_URL}${DESTINATION_REPOSITORY_URL}")
 }
 
+
+# Acquire a lock (if allowed by options): we'll return from this function once the lock has been acquired
 acquireLock () {
 	if test -z "${NO_LOCK}"
 	then
@@ -360,6 +378,8 @@ acquireLock () {
 	fi
 }
 
+
+# Create or update the mirror of the source repository.
 prepareLocalSourceRepository () {
 	prepareLocalSourceRepository_haveToCreateMirror=1
 	if test -f "${SOURCE_REPOSITORY_DIR}/config"
@@ -378,6 +398,9 @@ prepareLocalSourceRepository () {
 	fi
 }
 
+
+# Store in the SOURCE_BRANCHES variable the list of the branches in the source repository.
+# Exit if no branch can be found.
 getSourceRepositoryBranches () {
 	echo '# Listing source branches'
 	# List all branches and takes only the part after "refs/heads/", and store them in the SOURCE_BRANCHES variable
@@ -388,34 +411,56 @@ getSourceRepositoryBranches () {
 	fi
 }
 
+
+# Get the tags that exist in a specific branch of the source repository.
+#
+# Arguments:
+#   $1: the branch name
+#
+# Output:
+#   The list of tags (one per line)
 getSourceRepositoryTagsInBranch () {
 	git -C "${SOURCE_REPOSITORY_DIR}" tag --list --merged "refs/heads/${1}" 2>/dev/null || true
 }
 
 
+# Get the list of all the tags that exist in a repository.
+#
+# Arguments:
+#   $1: the directory of the repository
+#
+# Output:
+#   The list of tags (one per line)
 getTagList () {
 	# List all tags and takes only the part after "refs/heads/"
 	git -C "${1}" show-ref --tags | sed -E 's:^.*?refs/tags/::' || true
 }
 
 
+# Check if a string is in a white/black list.
+#
+# Arguments:
+#   $1: the string to be checked
+#   $2: the white/black list
+#
+# Return:
+#   0 (true): if the string is in the list
+#   1 (false): if the string is not in the list
 stringInList () {
-	stringInList_string="${1}"
-	stringInList_list="${2}"
-	for stringInList_listItem in ${stringInList_list}
+	for stringInList_listItem in ${2}
 	do
 		if test -n "${stringInList_listItem}"
 		then
 			case "${stringInList_listItem}" in
 				rx:*)
 					stringInList_substring=$(printf '%s' "${stringInList_listItem}" | cut -c4-)
-					if printf '%s' "${stringInList_string}" | grep -Eq "^${stringInList_substring}$"
+					if printf '%s' "${1}" | grep -Eq "^${stringInList_substring}$"
 					then
 						return 0
 					fi
 					;;
 				*)
-					if test "${stringInList_string}" = "${stringInList_listItem}"
+					if test "${1}" = "${stringInList_listItem}"
 					then
 						return 0
 					fi
@@ -427,9 +472,16 @@ stringInList () {
 }
 
 
-# $1: the string
-# $2: the whitelist
-# $3: the blacklist
+# Check if a string satisfies whitelist and blacklist checks.
+#
+# Arguments:
+#   $1: the string to be checked
+#   $2: the whitelist
+#   $3: the blacklist
+#
+# Return:
+#   0 (true): if the string satisfies the criteria
+#   1 (false): if the string does not satisfy the criteria
 stringPassesLists () {
 	if stringInList "${1}" "${3}"
 	then
@@ -447,14 +499,16 @@ stringPassesLists () {
 }
 
 
+# Store in the WORK_BRANCHES variable the list of the branches to be processed (checking the white/black lists).
+# Die if no branch can be found.
 getBranchesToProcess () {
-	echo '# Determining branches to be processed'
+	echo '# Determining the branches to be processed'
 	WORK_BRANCHES=''
-	for getBranchesToProcess_sourceBranch in ${SOURCE_BRANCHES}
+	for getBranchesToProcess_branch in ${SOURCE_BRANCHES}
 	do
-		if stringPassesLists "${getBranchesToProcess_sourceBranch}" "${BRANCH_WHITELIST}" "${BRANCH_BLACKLIST}"
+		if stringPassesLists "${getBranchesToProcess_branch}" "${BRANCH_WHITELIST}" "${BRANCH_BLACKLIST}"
 		then
-			WORK_BRANCHES="${WORK_BRANCHES} ${getBranchesToProcess_sourceBranch}"
+			WORK_BRANCHES="${WORK_BRANCHES} ${getBranchesToProcess_branch}"
 		fi
 	done
 	if test -z "${WORK_BRANCHES}"
@@ -464,6 +518,7 @@ getBranchesToProcess () {
 }
 
 
+# Create the worker repository (if it does not already exist)
 prepareWorkerRepository () {
 	prepareWorkerRepository_haveToCreateRepo=1
 	if test -f "${WORKER_REPOSITORY_DIR}/.git/config"
@@ -496,15 +551,19 @@ prepareWorkerRepository () {
 }
 
 
+# Process a branch, fetching it from the mirror of the source repository.
+# Any relevat tag will also be processed.
+#
+# Arguments:
+#   $1: the name of the branch to work with
 processBranch () {
-	processBranch_branch="${1}"
 	echo '  - fetching'
-	git -C "${WORKER_REPOSITORY_DIR}" fetch --quiet --tags source "${processBranch_branch}"
+	git -C "${WORKER_REPOSITORY_DIR}" fetch --quiet --tags source "${1}"
 	echo '  - checking-out'
-	git -C "${WORKER_REPOSITORY_DIR}" checkout --quiet --force -B "filter-branch/source/${processBranch_branch}" "remotes/source/${processBranch_branch}"
+	git -C "${WORKER_REPOSITORY_DIR}" checkout --quiet --force -B "filter-branch/source/${1}" "remotes/source/${1}"
 	echo '  - determining delta'
-	processBranch_range="filter-branch/result/${processBranch_branch}"
-	processBranch_last=$(git -C "${WORKER_REPOSITORY_DIR}" show-ref -s "refs/heads/filter-branch/filtered/${processBranch_branch}" || true)
+	processBranch_range="filter-branch/result/${1}"
+	processBranch_last=$(git -C "${WORKER_REPOSITORY_DIR}" show-ref -s "refs/heads/filter-branch/filtered/${1}" || true)
 	if test -n "${processBranch_last}"
 	then
 		processBranch_range="${processBranch_last}..${processBranch_range}"
@@ -515,8 +574,8 @@ processBranch () {
 		echo '  - nothing new, skipping'
 	else
 		echo '  - initializing filter'
-		rm -f "${WORKER_REPOSITORY_DIR}/.git/refs/filter-branch/originals/${processBranch_branch}/refs/heads/filter-branch/result/${processBranch_branch}"
-		git -C "${WORKER_REPOSITORY_DIR}" branch --force "filter-branch/result/${processBranch_branch}" FETCH_HEAD
+		rm -f "${WORKER_REPOSITORY_DIR}/.git/refs/filter-branch/originals/${1}/refs/heads/filter-branch/result/${1}"
+		git -C "${WORKER_REPOSITORY_DIR}" branch --force "filter-branch/result/${1}" FETCH_HEAD
 		rm -rf "${WORKER_REPOSITORY_DIR}.filter-branch"
 		echo "  - filtering commits"
 		processBranch_tags=''
@@ -524,7 +583,7 @@ processBranch () {
 		then
 			processBranch_tags=''
 		else
-			processBranch_tags=$(getSourceRepositoryTagsInBranch "${processBranch_branch}")
+			processBranch_tags=$(getSourceRepositoryTagsInBranch "${1}")
 		fi
 		if test -z "${processBranch_tags}"
 		then
@@ -541,7 +600,7 @@ processBranch () {
 			--remap-to-ancestor \
 			--tag-name-filter "${processBranch_tagNameFilter}" \
 			-d "${WORKER_REPOSITORY_DIR}.filter-branch" \
-			--original "refs/filter-branch/originals/${processBranch_branch}" \
+			--original "refs/filter-branch/originals/${1}" \
 			--state-branch "refs/filter-branch/state" \
 			--force \
 			-- "${processBranch_range}" \
@@ -568,7 +627,7 @@ processBranch () {
 				fi
 				for processBranch_tag in ${processBranch_tags}
 				do
- 					if ! itemInList "${processBranch_tag}" "${processBranchTag_availableTags}"
+					if ! itemInList "${processBranch_tag}" "${processBranchTag_availableTags}"
 					then
 						if stringPassesLists "${processBranch_tag}" "${TAG_WHITELIST}" "${TAG_BLACKLIST}"
 						then
@@ -579,19 +638,36 @@ processBranch () {
 			fi
 		fi
 		echo "  - storing state"
-		git -C "${WORKER_REPOSITORY_DIR}" branch -f "filter-branch/filtered/${processBranch_branch}" FETCH_HEAD
+		git -C "${WORKER_REPOSITORY_DIR}" branch -f "filter-branch/filtered/${1}" FETCH_HEAD
 	fi
 }
 
 
+# Print the SHA-1 hash of the tag of the work repository (if found).
+#
+# Arguments:
+#   $1: the name of the tag
+#
+# Output:
+#   The SHA-1 of the tag, or nothing if the tag does not exist
 getWorkingTagHash () {
 	git -C "${WORKER_REPOSITORY_DIR}" rev-list -n 1 "refs/tags/${1}" 2>/dev/null || true
 }
 
 
+# Print the SHA-1 hash of the nearest translated commit corresponding to a specific original commit.
+#
+# Arguments:
+#   $1: the SHA-1 hash of the original commit
+#   $2: the allowed history depth
+#
+# Output:
+#   The SHA-1 hash of the translated commit (if it can be found within $2 depth), or nothing otherwise
+#
+# Return:
+#   0 (true): if the translated commit has been found (and printed)
+#   1 (false): if the translated commit couldn't be found
 getTranslatedNearestCommitHash () {
-	# $1: the original hash
-	# $2 the allowed history depth
 	if test "${2}" -lt 1 -o -z "${PROCESS_TAGS_VISITEDHASHES##* ${1} *}"
 	then
 		return 1
@@ -606,9 +682,8 @@ getTranslatedNearestCommitHash () {
 	do
 		if test "${getTranslatedNearestCommitHash_v}" != "${1}"
 		then
-			if getTranslatedNearestCommitHash_v="$(getTranslatedNearestCommitHash "${getTranslatedNearestCommitHash_v}" "$(( $2 - 1))")"
+			if getTranslatedNearestCommitHash "${getTranslatedNearestCommitHash_v}" "$(( $2 - 1))"
 			then
-				printf '%s' "${getTranslatedNearestCommitHash_v}"
 				return 0
 			fi
 		fi
@@ -617,13 +692,16 @@ getTranslatedNearestCommitHash () {
 }
 
 
+# Tries to create a new translated tag, associating it to the nearest translated commit
+#
+# Arguments:
+#   $1: the name of the tag to be translated
 processNotConvertedTag () {
-	processNotConvertedTag_tag="${1}"
-	printf '  - remapping tag %s\n' "${processNotConvertedTag_tag}"
-	processNotConvertedTag_tagOriginalHash="$(getWorkingTagHash "${processNotConvertedTag_tag}")"
+	printf '  - remapping tag %s\n' "${1}"
+	processNotConvertedTag_tagOriginalHash="$(getWorkingTagHash "${1}")"
 	if test -z "${processNotConvertedTag_tagOriginalHash}"
 	then
-		printf 'Failed to get hash of tag %s\n' "${processNotConvertedTag_tag}">&2
+		printf 'Failed to get hash of tag %s\n' "${1}">&2
 		exit 1
 	fi
 	if test ! -f "${WORKER_REPOSITORY_DIR}.map"
@@ -633,14 +711,15 @@ processNotConvertedTag () {
 	PROCESS_TAGS_VISITEDHASHES=' '
 	if processNotConvertedTag_commitHash="$(getTranslatedNearestCommitHash "${processNotConvertedTag_tagOriginalHash}" "${PROCESS_TAGS_MAXHISTORYLOOKUP}")"
 	then
-		printf '%s -> filter-branch/converted-tags/%s (%s -> %s)\n' "${processNotConvertedTag_tag}" "${processNotConvertedTag_tag}" "${processNotConvertedTag_tagOriginalHash}" "${processNotConvertedTag_commitHash}"
-		git -C "${WORKER_REPOSITORY_DIR}" tag --force "filter-branch/converted-tags/${processNotConvertedTag_tag}" "${processNotConvertedTag_commitHash}"
+		printf '%s -> filter-branch/converted-tags/%s (%s -> %s)\n' "${1}" "${1}" "${processNotConvertedTag_tagOriginalHash}" "${processNotConvertedTag_commitHash}"
+		git -C "${WORKER_REPOSITORY_DIR}" tag --force "filter-branch/converted-tags/${1}" "${processNotConvertedTag_commitHash}"
 	else
-		printf 'Failed to map tag %s\n' "${processNotConvertedTag_tag}">&2
+		printf 'Failed to map tag %s\n' "${1}">&2
 	fi
 }
 
 
+# Process all the branches listed in the WORK_BRANCHES variable, and push the result to the destination repository.
 processBranches () {
 	processBranches_pushRefSpec=''
 	for processBranches_branch in ${WORK_BRANCHES}
@@ -672,11 +751,27 @@ processBranches () {
 }
 
 
+# Calculate the MD5 hash of a string.
+#
+# Arguments:
+#   $1: the string for which you want the MD5 hash
+#
+# Output:
+#   The MD5-1 hash of $1
 md5 () {
 	printf '%s' "${1}" | md5sum | sed -E 's: .*$::'
 }
 
 
+# Check if a string is in a list (separated by spaces, tabs or new lines)
+#
+# Arguments:
+#   $1: the string
+#   $2: the list of strings
+#
+# Return:
+#   0 (true): $1 is in $2
+#   1 (false): $1 is not in $2
 itemInList () {
 	for itemInList_item in ${2}
 	do
@@ -690,7 +785,6 @@ itemInList () {
 
 
 readParameters "$@"
-normalizeParameters
 checkEnvironment
 initializeEnvironment
 acquireLock
