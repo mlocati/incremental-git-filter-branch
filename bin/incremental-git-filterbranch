@@ -543,7 +543,7 @@ getBranchesToProcess () {
 # Create the worker repository (if it does not already exist)
 prepareWorkerRepository () {
 	prepareWorkerRepository_haveToCreateRepo=1
-	if test -f "${WORKER_REPOSITORY_DIR}/.git/config"
+	if test -f "${WORKER_REPOSITORY_DIR}/config"
 	then
 		echo '# Checking working repository'
 		if git -C "${WORKER_REPOSITORY_DIR}" rev-parse --git-dir >/dev/null 2>/dev/null
@@ -555,8 +555,13 @@ prepareWorkerRepository () {
 	then
 		echo '# Creating working repository'
 		rm -rf "${WORKER_REPOSITORY_DIR}"
+		git init --bare "${WORKER_REPOSITORY_DIR}"
 		echo '# Adding mirror source repository to working repository'
-		git clone ${NO_HARDLINKS} --local --origin source "${SOURCE_REPOSITORY_DIR}" "${WORKER_REPOSITORY_DIR}"
+		if ! git -C "${WORKER_REPOSITORY_DIR}" remote add source "${SOURCE_REPOSITORY_DIR}"
+		then
+			rm -rf "${WORKER_REPOSITORY_DIR}"
+			exit 1
+		fi
 		echo '# Adding destination repository to working repository'
 		if ! git -C "${WORKER_REPOSITORY_DIR}" remote add destination "${DESTINATION_REPOSITORY_URL}"
 		then
@@ -570,6 +575,7 @@ prepareWorkerRepository () {
 			exit 1
 		fi
 	fi
+	git -C "${WORKER_REPOSITORY_DIR}" symbolic-ref HEAD refs/none
 }
 
 
@@ -581,8 +587,9 @@ prepareWorkerRepository () {
 processBranch () {
 	echo '  - fetching'
 	git -C "${WORKER_REPOSITORY_DIR}" fetch --quiet --tags source "${1}"
-	echo '  - checking-out'
-	git -C "${WORKER_REPOSITORY_DIR}" checkout --quiet --force -B "filter-branch/source/${1}" "remotes/source/${1}"
+	echo '  - setting current branch'
+	git -C "${WORKER_REPOSITORY_DIR}" update-ref "refs/heads/filter-branch/source/${1}" "refs/remotes/source/${1}"
+	git -C "${WORKER_REPOSITORY_DIR}" symbolic-ref HEAD "refs/heads/filter-branch/source/${1}"
 	echo '  - determining delta'
 	processBranch_range="filter-branch/result/${1}"
 	processBranch_last=$(git -C "${WORKER_REPOSITORY_DIR}" show-ref -s "refs/heads/filter-branch/filtered/${1}" || true)
@@ -596,7 +603,7 @@ processBranch () {
 		echo '  - nothing new, skipping'
 	else
 		echo '  - initializing filter'
-		rm -f "${WORKER_REPOSITORY_DIR}/.git/refs/filter-branch/originals/${1}/refs/heads/filter-branch/result/${1}"
+		rm -f "${WORKER_REPOSITORY_DIR}/refs/filter-branch/originals/${1}/refs/heads/filter-branch/result/${1}"
 		git -C "${WORKER_REPOSITORY_DIR}" branch --force "filter-branch/result/${1}" FETCH_HEAD
 		rm -rf "${WORKER_REPOSITORY_DIR}.filter-branch"
 		echo "  - filtering commits"
