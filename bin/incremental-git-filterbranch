@@ -70,13 +70,13 @@ Where:
 	Multiple options can be specified.
 	Blacklisted tags take the precedence over whitelisted ones.
 --tags-plan
-   how tags should be processed. This can be one of these values:
-	  visited: process only the tags visited (default)
-	  none: do not process any tag
-	  all: process all tags
+	how tags should be processed. This can be one of these values:
+	- visited: process only the tags visited (default)
+	- none: do not process any tag
+	- all: process all tags
 --tags-max-history-lookup
 	limit the depth when looking for best matched filtered commit when --tags-plan is 'all'.
-	By default this value is 20.
+	By default this value is 50.
 --no-hardlinks
 	Do not create hard links (useful for file systems that don't support it).
 --no-atomic
@@ -108,7 +108,7 @@ readParameters () {
 	TAG_WHITELIST=''
 	TAG_BLACKLIST=''
 	TAGS_PLAN='visited'
-	PROCESS_TAGS_MAXHISTORYLOOKUP=20
+	PROCESS_TAGS_MAXHISTORYLOOKUP=50
 	NO_HARDLINKS=''
 	ATOMIC='--atomic'
 	NO_LOCK=''
@@ -254,6 +254,7 @@ readParameters () {
 	then
 		die 'The filter is empty.'
 	fi
+	# shellcheck disable=SC2086
 	checkFilter ${FILTER}
 	DESTINATION_REPOSITORY_URL="${3}"
 	if test -z "${DESTINATION_REPOSITORY_URL}"
@@ -655,66 +656,36 @@ getWorkingTagHash () {
 }
 
 
-# Print the SHA-1 hash of the nearest translated commit corresponding to a specific original commit.
-#
-# Arguments:
-#   $1: the SHA-1 hash of the original commit
-#   $2: the allowed history depth
-#
-# Output:
-#   The SHA-1 hash of the translated commit (if it can be found within $2 depth), or nothing otherwise
-#
-# Return:
-#   0 (true): if the translated commit has been found (and printed)
-#   1 (false): if the translated commit couldn't be found
-getTranslatedNearestCommitHash () {
-	if test "${2}" -lt 1 -o -z "${PROCESS_TAGS_VISITEDHASHES##* ${1} *}"
-	then
-		return 1
-	fi
-	PROCESS_TAGS_VISITEDHASHES="${PROCESS_TAGS_VISITEDHASHES}${1} "
-	if getTranslatedNearestCommitHash_v="$(grep -E "^${1}:" "${WORKER_REPOSITORY_DIR}.map")"
-	then
-		printf '%s' "${getTranslatedNearestCommitHash_v#${1}:}"
-		return 0
-	fi
-	for getTranslatedNearestCommitHash_v in $(git -C "${WORKER_REPOSITORY_DIR}" rev-list --parents -n 1 "${1}")
-	do
-		if test "${getTranslatedNearestCommitHash_v}" != "${1}"
-		then
-			if getTranslatedNearestCommitHash "${getTranslatedNearestCommitHash_v}" "$(( $2 - 1))"
-			then
-				return 0
-			fi
-		fi
-	done
-	return 1
-}
-
-
 # Tries to create a new translated tag, associating it to the nearest translated commit
 #
 # Arguments:
 #   $1: the name of the tag to be translated
 processNotConvertedTag () {
-	printf '  - remapping tag %s\n' "${1}"
+	printf '  - remapping tag %s... ' "${1}"
 	processNotConvertedTag_tagOriginalHash="$(getWorkingTagHash "${1}")"
 	if test -z "${processNotConvertedTag_tagOriginalHash}"
 	then
-		printf 'Failed to get hash of tag %s\n' "${1}">&2
-		exit 1
+		die "$(printf 'failed to get hash of tag %s' "${1}")"
 	fi
 	if test ! -f "${WORKER_REPOSITORY_DIR}.map"
 	then
 		git -C "${WORKER_REPOSITORY_DIR}" show refs/filter-branch/state:filter.map >"${WORKER_REPOSITORY_DIR}.map"
 	fi
-	PROCESS_TAGS_VISITEDHASHES=' '
-	if processNotConvertedTag_commitHash="$(getTranslatedNearestCommitHash "${processNotConvertedTag_tagOriginalHash}" "${PROCESS_TAGS_MAXHISTORYLOOKUP}")"
+	processNotConvertedTag_translatedCommit=''
+	for processNotConvertedTag_commitHash in $(git -C "${WORKER_REPOSITORY_DIR}" rev-list --date-order --max-count="${PROCESS_TAGS_MAXHISTORYLOOKUP}" "${processNotConvertedTag_tagOriginalHash}")
+	do
+		if processNotConvertedTag_mappedCommit="$(grep -E "^${processNotConvertedTag_commitHash}:" "${WORKER_REPOSITORY_DIR}.map")"
+		then
+			processNotConvertedTag_translatedCommit="${processNotConvertedTag_mappedCommit#${processNotConvertedTag_commitHash}:}"
+			break
+		fi
+	done
+	if test -z "${processNotConvertedTag_translatedCommit}"
 	then
-		printf '%s -> filter-branch/converted-tags/%s (%s -> %s)\n' "${1}" "${1}" "${processNotConvertedTag_tagOriginalHash}" "${processNotConvertedTag_commitHash}"
-		git -C "${WORKER_REPOSITORY_DIR}" tag --force "filter-branch/converted-tags/${1}" "${processNotConvertedTag_commitHash}"
+		printf 'nearest commit not found\n'>&2
 	else
-		printf 'Failed to map tag %s\n' "${1}">&2
+		printf 'mapping to commit %s\n' "${processNotConvertedTag_translatedCommit}"
+		git -C "${WORKER_REPOSITORY_DIR}" tag --force "filter-branch/converted-tags/${1}" "${processNotConvertedTag_translatedCommit}"
 	fi
 }
 
