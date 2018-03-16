@@ -1,0 +1,27 @@
+#!/bin/sh
+
+. "$(cd -- "$(dirname -- "${0}")" && pwd -P)/../bootstrap"
+
+initializeRepositories
+
+"${BIN_MAIN}" --workdir "${DIR_TEMP}" -- "${DIR_SOURCE}" '--prune-empty --subdirectory-filter subdir' "${DIR_DESTINATION}"
+
+echo 'Fetching initial branches'
+actualBranches="$(getBranchList "${DIR_DESTINATION}")"
+expectedBrances='master slave'
+if test "${actualBranches}" != "${expectedBrances}"
+then
+	printf 'Expected branches: %s\nResulting branches: %s\n' "${expectedBrances}" "${actualBranches}">&2
+	exit 1
+fi
+
+"${BIN_MAIN}" --workdir "${DIR_TEMP}" --branch-blacklist 'slave' --prune-branches -- "${DIR_SOURCE}" '--prune-empty --subdirectory-filter subdir' "${DIR_DESTINATION}"
+
+echo 'Fetching final branches'
+actualBranches="$(getBranchList "${DIR_DESTINATION}")"
+expectedBrances='master'
+if test "${actualBranches}" != "${expectedBrances}"
+then
+	printf 'Expected branches: %s\nResulting branches: %s\n' "${expectedBrances}" "${actualBranches}">&2
+	exit 1
+fi

@@ -22,7 +22,7 @@ IFS='
 # Arguments:
 #   $1: the message to be printed
 die () {
-	printf '%s\n' "${1}">&2
+	printf '%s\n' "${1}" >&2
 	exit 1
 }
 
@@ -35,7 +35,7 @@ die () {
 usage () {
 	if test $# -eq 1
 	then
-		printf '%s\n\n%s\n' "${1}" "Type ${0} --help to get help">&2
+		printf '%s\n\n%s\n' "${1}" "Type ${0} --help to get help" >&2
 		exit 1
 	fi
 	printf '%s' "Usage:
@@ -44,6 +44,7 @@ ${0} [-h | --help] [--workdir <workdirpath>]
 	[--tag-whitelist <whitelist>] [--tag-blacklist <blacklist>]
 	[--tags-plan (visited|all|none)]
 	[--tags-max-history-lookup <depth>]
+	[--prune-branches] [--prune-tags]
 	[--no-hardlinks] [--no-atomic] [--no-lock] [--]
 	<sourcerepository> <filter> <destinationrepository>
 	Apply git filter-branch in an incremental way
@@ -77,6 +78,12 @@ Where:
 --tags-max-history-lookup
 	limit the depth when looking for best matched filtered commit when --tags-plan is 'all'.
 	By default this value is 50.
+--prune-branches
+	delete branches in the destination repository that do not exist anymore in the source repository,
+	or that do not satisfy the whitelist/blacklist
+--prune-tags
+	delete tags in the destination repository that do not exist anymore in the source repository,
+	or that do not satisfy the whitelist/blacklist
 --no-hardlinks
 	Do not create hard links (useful for file systems that don't support it).
 --no-atomic
@@ -112,6 +119,8 @@ readParameters () {
 	NO_HARDLINKS=''
 	ATOMIC='--atomic'
 	NO_LOCK=''
+	PRUNE_BRANCHES=0
+	PRUNE_TAGS=0
 	while :
 	do
 		if test $# -lt 1
@@ -208,6 +217,14 @@ readParameters () {
 				fi
 				shift 2
 				;;
+			--prune-branches)
+				PRUNE_BRANCHES=1
+				shift 1
+				;;
+			--prune-tags)
+				PRUNE_TAGS=1
+				shift 1
+				;;
 			--no-hardlinks)
 				NO_HARDLINKS='--no-hardlinks'
 				shift 1
@@ -233,6 +250,10 @@ readParameters () {
 		if test -n "${TAG_WHITELIST}" -o -n "${TAG_BLACKLIST}"
 		then
 			die "You can't use --tag-whitelist or --tag-blacklist when you specify '--tags-plan none'"
+		fi
+		if test "${PRUNE_BRANCHES}" -ne 0 -o "${PRUNE_TAGS}" -ne 0
+		then
+			die "You can't use --prune-branches or --prune-tags when you specify '--tags-plan none'"
 		fi
 	fi
 	if test $# -lt 3
@@ -682,11 +703,50 @@ processNotConvertedTag () {
 	done
 	if test -z "${processNotConvertedTag_translatedCommit}"
 	then
-		printf 'nearest commit not found\n'>&2
+		printf 'nearest commit not found\n' >&2
 	else
 		printf 'mapping to commit %s\n' "${processNotConvertedTag_translatedCommit}"
 		git -C "${WORKER_REPOSITORY_DIR}" tag --force "filter-branch/converted-tags/${1}" "${processNotConvertedTag_translatedCommit}"
 	fi
+}
+
+
+# Remove already translated tags that do not exist in source repository anymore
+removeTranslatedTags () {
+	if test ${PRUNE_TAGS} -eq 0
+	then
+		# Superfluous
+		return 0
+	fi
+	echo '# Listing currently converted tags'
+	removeTranslatedTags_workerTags="$(git -C "${WORKER_REPOSITORY_DIR}" tag -l || true)"
+	if test -z "${removeTranslatedTags_workerTags}"
+	then
+		return 0
+	fi
+	echo '# Listing tags in source repository'
+	removeTranslatedTags_sourceTags="$(git -C "${WORKER_REPOSITORY_DIR}" ls-remote --quiet --tags source |  grep -Ev '\^\{\}$' | sed -E 's:^.*[ \t]refs/tags/::g')"
+	echo '# Deleting previously converted tags no more existing in source repository'
+	for removeTranslatedTags_workerTag in ${removeTranslatedTags_workerTags}
+	do
+		removeTranslatedTags_workerTagName="$(printf '%s' "${removeTranslatedTags_workerTag}" | sed -E 's:^filter-branch/converted-tags/::')"
+		removeTranslatedTags_deleteTag=1
+		if stringPassesLists "${removeTranslatedTags_workerTagName}" "${TAG_WHITELIST}" "${TAG_BLACKLIST}"
+		then
+			if test -n "${removeTranslatedTags_sourceTags}"
+			then
+				if itemInList "${removeTranslatedTags_workerTagName}" "${removeTranslatedTags_sourceTags}"
+				then
+					removeTranslatedTags_deleteTag=0
+				fi
+			fi
+		fi
+		if test ${removeTranslatedTags_deleteTag} -eq 1
+		then
+			printf '  - deleting translated tag %s\n' "${removeTranslatedTags_workerTag}"
+			git -C "${WORKER_REPOSITORY_DIR}" tag -d "${removeTranslatedTags_workerTag}"
+		fi
+	done
 }
 
 
@@ -719,6 +779,90 @@ processBranches () {
 	echo "# Pushing to destination repository"
 	# shellcheck disable=SC2086
 	git -C "${WORKER_REPOSITORY_DIR}" push --quiet --force ${ATOMIC} destination ${processBranches_pushRefSpec}
+}
+
+
+# Get the tags to be removed from the destination repository
+#
+# Output:
+#   - Empty string if no tag should be removed
+#   - Space-separated list (including a final extra space) of full tag paths (refs/tags/...) otherwise
+getPruneTags () {
+	getPruneTags_remoteTags="$(git -C "${WORKER_REPOSITORY_DIR}" ls-remote --quiet --tags destination |  grep -Ev '\^\{\}$' | sed -E 's:^.*[ \t]refs/tags/::g')"
+	if test -z "${getPruneTags_remoteTags}"
+	then
+		return 0
+	fi
+	getPruneTags_localTags=$(getTagList "${WORKER_REPOSITORY_DIR}")
+	for getPruneTags_remoteTag in ${getPruneTags_remoteTags}
+	do
+		getPruneTags_doDelete=1
+		if test -n "${getPruneTags_localTags}"
+		then
+			if itemInList "filter-branch/converted-tags/${getPruneTags_remoteTag}" "${getPruneTags_localTags}"
+			then
+				getPruneTags_doDelete=0
+			fi
+		fi
+		if test ${getPruneTags_doDelete} -eq 1
+		then
+			printf 'refs/tags/%s ' "${getPruneTags_remoteTag}"
+		fi
+	done
+}
+
+
+# Delete in destination repository the non converted branches
+getPruneBranches () {
+	getPruneBranches_currentBranch=''
+	getPruneBranches_remoteBranches="$(git -C "${WORKER_REPOSITORY_DIR}" ls-remote --quiet --heads destination | sed -E 's:^.*[ \t]refs/heads/::g')"
+	for getPruneBranches_remoteBranch in ${getPruneBranches_remoteBranches}
+	do
+		if ! itemInList "${getPruneBranches_remoteBranch}" "${WORK_BRANCHES}"
+		then
+			if test -z "${getPruneBranches_currentBranch}"
+			then
+				getPruneBranches_currentBranch="$(git ls-remote --symref destination HEAD | head -1 | sed -E 's:^.*?refs/heads/::' | sed -E 's:[ \t]+: :' | cut -d ' ' -f 1)"
+			fi
+			if test "${getPruneBranches_currentBranch}" = "${getPruneBranches_remoteBranch}"
+			then
+				printf 'Remote branch %s will NOT be deleted since it is the current one\n' "${getPruneBranches_remoteBranch}" >&2
+			else
+				printf 'refs/heads/%s ' "${getPruneBranches_remoteBranch}"
+			fi
+		fi
+	done
+}
+
+
+# Delete in destination repository the non converted branches and tags
+pruneDestination () {
+	pruneDestination_allRefs=''
+	if test ${PRUNE_TAGS} -ne 0
+	then
+		echo '# Determining destination tags to be removed'
+		pruneDestination_theseRefs="$(getPruneTags)"
+		if test -n "${pruneDestination_theseRefs}"
+		then
+			pruneDestination_allRefs="${pruneDestination_allRefs}${pruneDestination_theseRefs}"
+		fi
+	fi
+	if test ${PRUNE_BRANCHES} -ne 0
+	then
+		echo '# Determining destination branches to be removed'
+		pruneDestination_theseRefs="$(getPruneBranches)"
+		if test -n "${pruneDestination_theseRefs}"
+		then
+			pruneDestination_allRefs="${pruneDestination_allRefs}${pruneDestination_theseRefs}"
+		fi
+	fi
+	if test -z "${pruneDestination_allRefs}"
+	then
+		return 0
+	fi
+	printf '# Deleting refs in destination repository (%s)\n' "${pruneDestination_allRefs% }"
+	# shellcheck disable=SC2086
+	git -C "${WORKER_REPOSITORY_DIR}" push --quiet --delete destination ${pruneDestination_allRefs% }
 }
 
 
@@ -763,5 +907,7 @@ prepareLocalSourceRepository
 getSourceRepositoryBranches
 getBranchesToProcess
 prepareWorkerRepository
+removeTranslatedTags
 processBranches
+pruneDestination
 echo "All done."
