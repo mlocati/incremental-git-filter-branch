@@ -355,13 +355,30 @@ checkEnvironment () {
 			die 'The flock command is not available. You may want to use --no-lock option to avoid using it (but no concurrency check will be performed).'
 		fi
 	fi
-	for checkEnvironment_command in git sed grep md5sum
+	for checkEnvironment_command in git sed grep
 	do
 		if ! command -v "${checkEnvironment_command}" >/dev/null
 		then
 			die "The required ${checkEnvironment_command} command is not available."
 		fi
 	done
+	if ! $(echo '' | sed -E '' 2>/dev/null)
+	then
+		die 'The sed command does not support extended regular expressions.'
+	fi
+	if ! $(echo '' | grep -E '' 2>/dev/null)
+	then
+		die 'The grep command does not support extended regular expressions.'
+	fi
+	if command -v md5sum >/dev/null
+	then
+		MD5_COMMAND=md5sum
+	elif command -v md5 >/dev/null
+	then
+		MD5_COMMAND=md5
+	else
+		die 'The required md5sum (or md5) command is not available.'
+	fi
 	checkEnvironment_vMin='2.15.0'
 	checkEnvironment_vCur=$(git --version | cut -d ' ' -f3)
 	checkEnvironment_vWork=$(printf '%s\n%s' "${checkEnvironment_vCur}" "${checkEnvironment_vMin}" | sort -t '.' -n -k1,1 -k2,2 -k3,3 -k4,4 | head -n 1)
@@ -376,11 +393,11 @@ checkEnvironment () {
 initializeEnvironment () {
 	if ! test -d "${WORK_DIRECTORY}"
 	then
-		mkdir --parents -- "${WORK_DIRECTORY}" || die "Failed to create the working directory ${WORK_DIRECTORY}"
+		mkdir -p -- "${WORK_DIRECTORY}" || die "Failed to create the working directory ${WORK_DIRECTORY}"
 	fi
 	WORK_DIRECTORY=$(absolutizePath "${WORK_DIRECTORY}")
-	SOURCE_REPOSITORY_DIR=${WORK_DIRECTORY}/source-$(md5 "${SOURCE_REPOSITORY_URL}")
-	WORKER_REPOSITORY_DIR=${WORK_DIRECTORY}/worker-$(md5 "${SOURCE_REPOSITORY_URL}${DESTINATION_REPOSITORY_URL}")
+	SOURCE_REPOSITORY_DIR=${WORK_DIRECTORY}/source-$(getMD5 "${SOURCE_REPOSITORY_URL}")
+	WORKER_REPOSITORY_DIR=${WORK_DIRECTORY}/worker-$(getMD5 "${SOURCE_REPOSITORY_URL}${DESTINATION_REPOSITORY_URL}")
 }
 
 
@@ -426,7 +443,7 @@ prepareLocalSourceRepository () {
 getSourceRepositoryBranches () {
 	echo '# Listing source branches'
 	# List all branches and takes only the part after "refs/heads/", and store them in the SOURCE_BRANCHES variable
-	SOURCE_BRANCHES=$(git -C "${SOURCE_REPOSITORY_DIR}" show-ref --heads | sed -E 's:^.*?refs/heads/::')
+	SOURCE_BRANCHES=$(git -C "${SOURCE_REPOSITORY_DIR}" show-ref --heads | sed -E 's:^.* refs/heads/::')
 	if test -z "${SOURCE_BRANCHES}"
 	then
 		die 'Failed to retrieve branch list'
@@ -455,7 +472,7 @@ getSourceRepositoryTagsInBranch () {
 #   The list of tags (one per line)
 getTagList () {
 	# List all tags and takes only the part after "refs/heads/"
-	git -C "${1}" show-ref --tags | sed -E 's:^.*?refs/tags/::' || true
+	git -C "${1}" show-ref --tags | sed -E 's:^.* refs/tags/::' || true
 }
 
 
@@ -829,7 +846,7 @@ getPruneBranches () {
 		then
 			if test -z "${getPruneBranches_currentBranch}"
 			then
-				getPruneBranches_currentBranch="$(git ls-remote --symref destination HEAD | head -1 | sed -E 's:^.*?refs/heads/::' | sed -E 's:[ \t]+: :' | cut -d ' ' -f 1)"
+				getPruneBranches_currentBranch="$(git -C "${WORKER_REPOSITORY_DIR}" ls-remote --symref destination HEAD | head -1 | sed -E 's_^ref: +refs/heads/__' | cut -f 1 | cut -d ' ' -f 1)"
 			fi
 			if test "${getPruneBranches_currentBranch}" = "${getPruneBranches_remoteBranch}"
 			then
@@ -880,8 +897,8 @@ pruneDestination () {
 #
 # Output:
 #   The MD5-1 hash of $1
-md5 () {
-	printf '%s' "${1}" | md5sum | sed -E 's: .*$::'
+getMD5 () {
+	printf '%s' "${1}" | "${MD5_COMMAND}" | sed -E 's: .*$::'
 }
 
 
