@@ -379,7 +379,7 @@ checkEnvironment () {
 	else
 		die 'The required md5sum (or md5) command is not available.'
 	fi
-	checkEnvironment_vMin='2.15.0'
+	checkEnvironment_vMin='2.16.0'
 	checkEnvironment_vCur=$(git --version | cut -d ' ' -f3)
 	checkEnvironment_vWork=$(printf '%s\n%s' "${checkEnvironment_vCur}" "${checkEnvironment_vMin}" | sort -t '.' -n -k1,1 -k2,2 -k3,3 -k4,4 | head -n 1)
 	if test "${checkEnvironment_vWork}" != "${checkEnvironment_vMin}"
