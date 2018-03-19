@@ -4,7 +4,7 @@
 
 initializeRepositories
 
-"${BIN_MAIN}" --workdir "${DIR_TEMP}" --branch-whitelist 'master' -- "${DIR_SOURCE}" '--prune-empty --subdirectory-filter subdir' "${DIR_DESTINATION}"
+"${BIN_MAIN}" ${BIN_MAIN_OPTIONS} --workdir "${DIR_TEMP}" --branch-whitelist 'master' -- "${DIR_SOURCE}" '--prune-empty --subdirectory-filter subdir' "${DIR_DESTINATION}"
 
 echo 'Fetching initial tags'
 actualTags="$(getTagList "${DIR_DESTINATION}")"
@@ -15,7 +15,7 @@ then
 	exit 1
 fi
 
-"${BIN_MAIN}" --workdir "${DIR_TEMP}" --branch-whitelist 'master' --prune-tags --tag-blacklist 'rx:tag-.*' -- "${DIR_SOURCE}" '--prune-empty --subdirectory-filter subdir' "${DIR_DESTINATION}"
+"${BIN_MAIN}" ${BIN_MAIN_OPTIONS} --workdir "${DIR_TEMP}" --branch-whitelist 'master' --prune-tags --tag-blacklist 'rx:tag-.*' -- "${DIR_SOURCE}" '--prune-empty --subdirectory-filter subdir' "${DIR_DESTINATION}"
 
 echo 'Fetching final tags'
 actualTags="$(getTagList "${DIR_DESTINATION}")"

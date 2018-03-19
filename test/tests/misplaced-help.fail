@@ -2,4 +2,4 @@
 
 . "$(cd -- "$(dirname -- "$0")" && pwd -P)/../bootstrap"
 
-"${BIN_MAIN}" -- --help
+"${BIN_MAIN}" ${BIN_MAIN_OPTIONS} -- --help

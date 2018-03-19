@@ -26,6 +26,12 @@ then
 	exit 1
 fi
 
+BIN_MAIN_OPTIONS=''
+if ! command -v flock >/dev/null
+then
+	BIN_MAIN_OPTIONS='${BIN_MAIN_OPTIONS} --no-lock'
+fi
+
 initializeRepositories () {
 	rm -rf "${DIR_TEMP}"
 	mkdir "${DIR_TEMP}"

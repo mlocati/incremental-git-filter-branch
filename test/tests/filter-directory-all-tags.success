@@ -4,7 +4,7 @@
 
 initializeRepositories
 
-"${BIN_MAIN}" --workdir "${DIR_TEMP}" --branch-whitelist 'master' --tags-plan all -- "${DIR_SOURCE}" '--subdirectory-filter subdir' "${DIR_DESTINATION}"
+"${BIN_MAIN}" ${BIN_MAIN_OPTIONS} --workdir "${DIR_TEMP}" --branch-whitelist 'master' --tags-plan all -- "${DIR_SOURCE}" '--subdirectory-filter subdir' "${DIR_DESTINATION}"
 
 echo 'Fetching tags'
 actualTags="$(getTagList "${DIR_DESTINATION}")"
