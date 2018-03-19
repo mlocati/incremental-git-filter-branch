@@ -1,5 +1,5 @@
 {
-    "name": "mlocati/incremental-git-filter-branch",
+    "name": "concrete5/incremental-filter-branch",
     "description": "Shell script to call git filter-branch in an incremental way",
     "type": "library",
     "keywords": [
@@ -11,7 +11,7 @@
         "bash",
         "posix"
     ],
-    "homepage": "https://github.com/mlocati/incremental-git-filter-branch",
+    "homepage": "https://github.com/concrete5/incremental-filter-branch",
     "license": "MIT",
     "authors": [
         {
@@ -22,8 +22,8 @@
         }
     ],
     "support": {
-        "issues": "https://github.com/mlocati/incremental-git-filter-branch/issues",
-        "source": "https://github.com/mlocati/incremental-git-filter-branch"
+        "issues": "https://github.com/concrete5/incremental-filter-branch/issues",
+        "source": "https://github.com/concrete5/incremental-filter-branch"
     },
     "bin": [
         "bin/incremental-git-filterbranch"

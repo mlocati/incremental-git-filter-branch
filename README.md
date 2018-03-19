@@ -1,4 +1,4 @@
-[![TravisCI Build Status](https://travis-ci.org/mlocati/incremental-git-filter-branch.svg?branch=master)](https://travis-ci.org/mlocati/incremental-git-filter-branch)
+[![TravisCI Build Status](https://travis-ci.org/concrete5/incremental-filter-branch.svg?branch=master)](https://travis-ci.org/concrete5/incremental-filter-branch)
 
 ## Introduction
 
@@ -38,7 +38,7 @@ Get the script and read the syntax using the `--help` option.
 ## Legal stuff
 
 Use at your own risk.
-[MIT License](https://github.com/mlocati/incremental-git-filter-branch/blob/master/LICENSE).
+[MIT License](https://github.com/concrete5/incremental-filter-branch/blob/master/LICENSE).
 
 
 ## Credits

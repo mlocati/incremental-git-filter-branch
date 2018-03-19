@@ -6,7 +6,7 @@
 # Copyright (c) Michele Locati, 2018
 #
 # MIT license
-# https://github.com/mlocati/incremental-git-filter-branch/blob/master/LICENSE
+# https://github.com/concrete5/incremental-filter-branch/blob/master/LICENSE
 #
 
 # Exit immediately if a pipeline, a list, or a compound command, exits with a non-zero status.
