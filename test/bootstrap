@@ -85,11 +85,11 @@ initializeRepositories () {
 }
 
 getTagList () {
-	getTagList_multiline=$(git -C "${1}" show-ref --tags | sed -E 's:^.*?refs/tags/::' || true)
+	getTagList_multiline=$(git -C "${1}" show-ref --tags | sed -E 's:^.* refs/tags/::' || true)
 	printf '%s' "${getTagList_multiline}" | sort -b | tr '\n' ' ' | sed -E 's:^ | $::g'
 }
 
 getBranchList () {
-	getBranchList_multiline=$(git -C "${1}" show-ref --heads | sed -E 's:^.*?refs/heads/::' || true)
+	getBranchList_multiline=$(git -C "${1}" show-ref --heads | sed -E 's:^.* refs/heads/::' || true)
 	printf '%s' "${getBranchList_multiline}" | sort -b | tr '\n' ' ' | sed -E 's:^ | $::g'
 }
