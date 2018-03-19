@@ -98,7 +98,8 @@ destinationrepository
 	The URL or path to the destination repository.
 
 You can prefix branch/tag names in both whitelists and blacklists with 'rx:': in this case a regular expression check will be performed.
-For instance: --branch-whitelist 'master rx:release\\/\\d+(\\.\\d+)*' will match 'master' and 'release/1.1'
+For instance: --branch-whitelist 'master rx:release\/[0-9]+(\.[0-9]+)*' will match 'master' and 'release/1.1'.
+Please remark that these regular expressions should comply the POSIX ERE (Extended Regular Expressions) syntax.
 "
 	exit 0
 }
