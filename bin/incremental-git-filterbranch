@@ -409,7 +409,7 @@ acquireLock () {
 		exec 9>"${WORKER_REPOSITORY_DIR}.lock"
 		while :
 		do
-			if flock --exclusive --timeout 3 9
+			if flock -w 3 9
 			then
 				break
 			fi
