@@ -750,7 +750,7 @@ removeTranslatedTags () {
 		return 0
 	fi
 	echo '# Listing tags in source repository'
-	removeTranslatedTags_sourceTags="$(git -C "${WORKER_REPOSITORY_DIR}" ls-remote --quiet --tags source |  grep -Ev '\^\{\}$' | sed -E 's:^.*[ \t]refs/tags/::g')"
+	removeTranslatedTags_sourceTags="$(git -C "${WORKER_REPOSITORY_DIR}" ls-remote --quiet --tags source |  grep -Ev '\^\{\}$' | tr '\t' ' ' | sed -E 's:^.* refs/tags/::g')"
 	echo '# Deleting previously converted tags no more existing in source repository'
 	for removeTranslatedTags_workerTag in ${removeTranslatedTags_workerTags}
 	do
@@ -813,7 +813,7 @@ processBranches () {
 #   - Empty string if no tag should be removed
 #   - Space-separated list (including a final extra space) of full tag paths (refs/tags/...) otherwise
 getPruneTags () {
-	getPruneTags_remoteTags="$(git -C "${WORKER_REPOSITORY_DIR}" ls-remote --quiet --tags destination |  grep -Ev '\^\{\}$' | sed -E 's:^.*[ \t]refs/tags/::g')"
+	getPruneTags_remoteTags="$(git -C "${WORKER_REPOSITORY_DIR}" ls-remote --quiet --tags destination |  grep -Ev '\^\{\}$' | tr '\t' ' ' | sed -E 's:^.* refs/tags/::g')"
 	if test -z "${getPruneTags_remoteTags}"
 	then
 		return 0
@@ -840,7 +840,7 @@ getPruneTags () {
 # Delete in destination repository the non converted branches
 getPruneBranches () {
 	getPruneBranches_currentBranch=''
-	getPruneBranches_remoteBranches="$(git -C "${WORKER_REPOSITORY_DIR}" ls-remote --quiet --heads destination | sed -E 's:^.*[ \t]refs/heads/::g')"
+	getPruneBranches_remoteBranches="$(git -C "${WORKER_REPOSITORY_DIR}" ls-remote --quiet --heads destination | tr '\t' ' ' | sed -E 's:^.* refs/heads/::g')"
 	for getPruneBranches_remoteBranch in ${getPruneBranches_remoteBranches}
 	do
 		if ! itemInList "${getPruneBranches_remoteBranch}" "${WORK_BRANCHES}"
