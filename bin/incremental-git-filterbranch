@@ -640,9 +640,9 @@ processBranch () {
 			processBranch_tagNameFilter='read -r tag; printf "filter-branch/converted-tags/%s" "${tag}"'
 		fi
 		rm -rf "${WORKER_REPOSITORY_DIR}.map"
-		exec 3>&1
+		set +o errexit
 		# shellcheck disable=SC2086
-		if processBranch_stdErr=$(git -C "${WORKER_REPOSITORY_DIR}" filter-branch \
+		git -C "${WORKER_REPOSITORY_DIR}" filter-branch \
 			${FILTER} \
 			--remap-to-ancestor \
 			--tag-name-filter "${processBranch_tagNameFilter}" \
@@ -651,38 +651,40 @@ processBranch () {
 			--state-branch "refs/filter-branch/state" \
 			--force \
 			-- "${processBranch_range}" \
-			1>&3 2>&1 | tee /dev/stderr
-		)
+			2>"${WORKER_REPOSITORY_DIR}.stderr"
+		processBranch_rc=$?
+		set -o errexit
+		if test -s "${WORKER_REPOSITORY_DIR}.stderr"
 		then
-			processBranch_rc=0
-		else
-			processBranch_rc=1
-		fi
-		exec 3>&-
-		if test "${processBranch_rc}" -ne 0
-		then
-			if test -n "${processBranch_stdErr##*Found nothing to rewrite*}"
+			cat "${WORKER_REPOSITORY_DIR}.stderr" >&2
+			if test ${processBranch_rc} -eq 1
 			then
-				die 'git failed'
-			fi
-		else
-			if test "${TAGS_PLAN}" = 'all' -a -n "${processBranch_tags}"
-			then
-				if ! processBranchTag_availableTags="$(git -C "${WORKER_REPOSITORY_DIR}" tag --list | grep -E '^filter-branch/converted-tags/' | sed -E 's:^filter-branch/converted-tags/::')"
+				if test -n "$(cat "${WORKER_REPOSITORY_DIR}.stderr" | grep -E '^Found nothing to rewrite$')"
 				then
-					processBranchTag_availableTags=''
+					processBranch_rc=2
 				fi
-				for processBranch_tag in ${processBranch_tags}
-				do
-					if ! itemInList "${processBranch_tag}" "${processBranchTag_availableTags}"
-					then
-						if stringPassesLists "${processBranch_tag}" "${TAG_WHITELIST}" "${TAG_BLACKLIST}"
-						then
-							processNotConvertedTag "${processBranch_tag}"
-						fi
-					fi
-				done
 			fi
+		fi
+		if test ${processBranch_rc} -ne 0 -a ${processBranch_rc} -ne 2
+		then
+			die 'git failed'
+		fi
+		if test "${TAGS_PLAN}" = 'all' -a -n "${processBranch_tags}"
+		then
+			if ! processBranchTag_availableTags="$(git -C "${WORKER_REPOSITORY_DIR}" tag --list | grep -E '^filter-branch/converted-tags/' | sed -E 's:^filter-branch/converted-tags/::')"
+			then
+				processBranchTag_availableTags=''
+			fi
+			for processBranch_tag in ${processBranch_tags}
+			do
+				if ! itemInList "${processBranch_tag}" "${processBranchTag_availableTags}"
+				then
+					if stringPassesLists "${processBranch_tag}" "${TAG_WHITELIST}" "${TAG_BLACKLIST}"
+					then
+						processNotConvertedTag "${processBranch_tag}"
+					fi
+				fi
+			done
 		fi
 		echo "  - storing state"
 		git -C "${WORKER_REPOSITORY_DIR}" branch -f "filter-branch/filtered/${1}" FETCH_HEAD
